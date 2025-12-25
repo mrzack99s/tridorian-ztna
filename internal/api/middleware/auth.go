@@ -1,0 +1,73 @@
+package middleware
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"tridorian-ztna/internal/api/common"
+	"tridorian-ztna/pkg/utils"
+
+	"github.com/google/uuid"
+)
+
+const (
+	AdminIDKey contextKey = "admin_id"
+	RoleKey    contextKey = "role"
+)
+
+func JWTAuth(secret string, purpose utils.TokenPurpose) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			token := ""
+			authHeader := r.Header.Get("Authorization")
+			if authHeader != "" {
+				parts := strings.Split(authHeader, " ")
+				if len(parts) == 2 && parts[0] == "Bearer" {
+					token = parts[1]
+				}
+			}
+
+			// If no header, check cookie
+			if token == "" {
+				cookieName := "mgmt_token"
+				if purpose == utils.PurposeBackoffice {
+					cookieName = "backoffice_token"
+				}
+
+				cookie, err := r.Cookie(cookieName)
+				if err == nil {
+					token = cookie.Value
+				}
+			}
+
+			if token == "" {
+				common.Error(w, http.StatusUnauthorized, "authentication required")
+				return
+			}
+
+			claims, err := utils.ParseToken(secret, token)
+			if err != nil {
+				common.Error(w, http.StatusUnauthorized, "invalid or expired token")
+				return
+			}
+
+			// Validate Purpose
+			if claims.Purpose != purpose {
+				common.Error(w, http.StatusForbidden, "token not authorized for this action")
+				return
+			}
+
+			// Add to context
+			ctx := context.WithValue(r.Context(), AdminIDKey, claims.Subject)
+			ctx = context.WithValue(ctx, RoleKey, claims.Role)
+
+			// Ensure TenantID is also in context from the token
+			if claims.TenantID != "" {
+				tenantUUID, _ := uuid.Parse(claims.TenantID)
+				ctx = context.WithValue(ctx, TenantIDKey, tenantUUID)
+			}
+
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}

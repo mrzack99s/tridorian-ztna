@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: devuser
+      POSTGRES_PASSWORD: P@ssw0rd
+      POSTGRES_DB: trivpn-trimanaged
+    ports:
+      - "5432:5432"
+
+  valkey:
+    image: valkey/valkey:9-alpine
+    command: valkey-server --requirepass "P@ssw0rd"
+    ports:
+      - "6379:6379"
