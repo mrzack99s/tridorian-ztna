@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"log"
 	"tridorian-ztna/internal/models"
 
 	"golang.org/x/oauth2/google"
@@ -82,27 +83,47 @@ func (s *IdentityService) SearchGoogleUsers(ctx context.Context, serviceAccountJ
 		return nil, fmt.Errorf("failed to create admin service: %w", err)
 	}
 
-	googleQuery := fmt.Sprintf("name:'%s'* OR email:'%s'*", queryStr, queryStr)
-
-	resp, err := srv.Users.List().
-		Context(ctx).
-		Customer("my_customer").
-		MaxResults(20).
-		Query(googleQuery).
-		OrderBy("email").
-		Do()
-	if err != nil {
-		return nil, fmt.Errorf("failed to search users: %w", err)
-	}
+	// Google Admin API query doesn't support OR. We must do multiple queries or a single one if possible.
+	// For users, we can search by name:Prefix* or email:Prefix*
+	// We'll do two quick searches and merge them.
 
 	var foundUsers []models.ExternalIdentity
-	for _, u := range resp.Users {
-		foundUsers = append(foundUsers, models.ExternalIdentity{
-			Name:       u.Name.FullName,
-			Email:      u.PrimaryEmail,
-			ExternalID: u.Id,
-			IsAdmin:    u.IsAdmin,
-		})
+	seenIDs := make(map[string]bool)
+
+	searchBy := func(query string) {
+		log.Printf("DEBUG: Google Identity search users query: %s", query)
+		resp, err := srv.Users.List().
+			Context(ctx).
+			Customer("my_customer").
+			MaxResults(20).
+			Query(query).
+			Do()
+		if err != nil {
+			log.Printf("DEBUG: Google Identity search users error for query [%s]: %v", query, err)
+			return
+		}
+		if resp.Users != nil {
+			for _, u := range resp.Users {
+				if !seenIDs[u.Id] {
+					foundUsers = append(foundUsers, models.ExternalIdentity{
+						Name:       u.Name.FullName,
+						Email:      u.PrimaryEmail,
+						ExternalID: u.Id,
+						IsAdmin:    u.IsAdmin,
+					})
+					seenIDs[u.Id] = true
+				}
+			}
+		}
+	}
+
+	// Try multiple query formats to be safe
+	searchBy(fmt.Sprintf("name:%s*", queryStr))
+	searchBy(fmt.Sprintf("email:%s*", queryStr))
+
+	// Fallback: simple search might be supported in some environments
+	if len(foundUsers) == 0 {
+		searchBy(queryStr)
 	}
 
 	return foundUsers, nil
@@ -174,4 +195,54 @@ func (s *IdentityService) GetUserGroups(ctx context.Context, serviceAccountJSON 
 	}
 
 	return groups, nil
+}
+
+// SearchGoogleGroups performs a search for groups.
+func (s *IdentityService) SearchGoogleGroups(ctx context.Context, serviceAccountJSON []byte, adminEmail string, queryStr string) ([]string, error) {
+	config, err := google.JWTConfigFromJSON(serviceAccountJSON, admin.AdminDirectoryGroupReadonlyScope)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse service account JSON: %w", err)
+	}
+	config.Subject = adminEmail
+
+	ts := config.TokenSource(ctx)
+	srv, err := admin.NewService(ctx, option.WithTokenSource(ts))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create admin service: %w", err)
+	}
+
+	// Merge results for name and email prefix search since OR isn't supported
+	var groupEmails []string
+	seenEmails := make(map[string]bool)
+
+	searchGroups := func(query string) {
+		log.Printf("DEBUG: Google Identity search groups query: %s", query)
+		resp, err := srv.Groups.List().
+			Context(ctx).
+			Customer("my_customer").
+			MaxResults(20).
+			Query(query).
+			Do()
+		if err != nil {
+			log.Printf("DEBUG: Google Identity search groups error for query [%s]: %v", query, err)
+			return
+		}
+		if resp.Groups != nil {
+			for _, g := range resp.Groups {
+				if !seenEmails[g.Email] {
+					groupEmails = append(groupEmails, g.Email)
+					seenEmails[g.Email] = true
+				}
+			}
+		}
+	}
+
+	searchGroups(fmt.Sprintf("name:%s*", queryStr))
+	searchGroups(fmt.Sprintf("email:%s*", queryStr))
+
+	if len(groupEmails) == 0 {
+		searchGroups(queryStr)
+	}
+
+	return groupEmails, nil
 }

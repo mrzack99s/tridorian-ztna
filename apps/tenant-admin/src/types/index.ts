@@ -19,6 +19,8 @@ export interface AccessPolicy {
     name: string;
     effect: 'allow' | 'deny';
     priority: number;
+    destination?: string;
+    root_node?: PolicyNode;
 }
 
 export interface PolicyCondition {

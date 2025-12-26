@@ -19,27 +19,54 @@ func NewPolicyService(db *gorm.DB) *PolicyService {
 
 func (s *PolicyService) ListAccessPolicies(tenantID uuid.UUID) ([]models.AccessPolicy, error) {
 	var policies []models.AccessPolicy
-	if err := s.db.Scopes(models.TenantScope(tenantID)).Find(&policies).Error; err != nil {
+	if err := s.db.Scopes(models.TenantScope(tenantID)).
+		Order("priority asc").
+		Find(&policies).Error; err != nil {
 		return nil, err
+	}
+
+	for i := range policies {
+		if policies[i].RootNodeID != uuid.Nil {
+			node, err := s.LoadNodeRecursive(policies[i].RootNodeID)
+			if err == nil {
+				policies[i].RootNode = *node
+			}
+		}
 	}
 	return policies, nil
 }
 
-func (s *PolicyService) CreateAccessPolicy(tenantID uuid.UUID, name string, effect string, priority int) (*models.AccessPolicy, error) {
-	policy := models.AccessPolicy{
-		BaseTenant: models.BaseTenant{TenantID: tenantID},
-		BasePolicy: models.BasePolicy{
-			Name:     name,
-			Priority: priority,
-			Enabled:  true,
-		},
-		Effect: effect,
-	}
+func (s *PolicyService) CreateAccessPolicy(tenantID uuid.UUID, policy *models.AccessPolicy) (*models.AccessPolicy, error) {
+	policy.TenantID = tenantID
+	policy.Enabled = true
 
-	if err := s.db.Create(&policy).Error; err != nil {
+	s.setTenantIDOnTree(tenantID, &policy.RootNode)
+
+	if err := s.db.Session(&gorm.Session{FullSaveAssociations: true}).Create(policy).Error; err != nil {
 		return nil, err
 	}
-	return &policy, nil
+	return policy, nil
+}
+
+func (s *PolicyService) UpdateAccessPolicy(tenantID uuid.UUID, policy *models.AccessPolicy) (*models.AccessPolicy, error) {
+	policy.TenantID = tenantID
+
+	// 1. Get the old policy to find the root node
+	var oldPolicy models.AccessPolicy
+	if err := s.db.First(&oldPolicy, "id = ?", policy.ID).Error; err == nil {
+		// 2. Delete the old tree recursively
+		s.DeleteNodeRecursive(oldPolicy.RootNodeID)
+	}
+
+	s.setTenantIDOnTree(tenantID, &policy.RootNode)
+
+	// 3. Clear IDs in the new tree to force recreation
+	s.clearIDsRecursive(&policy.RootNode)
+
+	if err := s.db.Session(&gorm.Session{FullSaveAssociations: true}).Save(policy).Error; err != nil {
+		return nil, err
+	}
+	return policy, nil
 }
 
 func (s *PolicyService) DeleteAccessPolicy(tenantID uuid.UUID, policyID uuid.UUID) error {

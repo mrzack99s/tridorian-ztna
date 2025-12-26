@@ -8,6 +8,7 @@ type AccessPolicy struct {
 
 	ResourceType string `json:"resource_type,omitempty"`
 	ResourceID   string `json:"resource_id,omitempty"`
+	Destination  string `json:"destination,omitempty"` // CIDR, IP, or Service name
 
 	RootNodeID uuid.UUID  `json:"root_node_id,omitempty"`
 	RootNode   PolicyNode `json:"root_node,omitempty"`

@@ -2,8 +2,10 @@ package mgmt
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"tridorian-ztna/internal/api/common"
 	"tridorian-ztna/internal/api/middleware"
 	"tridorian-ztna/internal/models"
@@ -13,20 +15,22 @@ import (
 )
 
 type Handler struct {
-	adminService  *services.AdminService
-	tenantService *services.TenantService
-	policyService *services.PolicyService
-	nodeService   *services.NodeService
-	jwtSecret     string
+	adminService    *services.AdminService
+	tenantService   *services.TenantService
+	policyService   *services.PolicyService
+	nodeService     *services.NodeService
+	identityService *services.IdentityService
+	jwtSecret       string
 }
 
-func NewHandler(adminService *services.AdminService, tenantService *services.TenantService, policyService *services.PolicyService, nodeService *services.NodeService, jwtSecret string) *Handler {
+func NewHandler(adminService *services.AdminService, tenantService *services.TenantService, policyService *services.PolicyService, nodeService *services.NodeService, identityService *services.IdentityService, jwtSecret string) *Handler {
 	return &Handler{
-		adminService:  adminService,
-		tenantService: tenantService,
-		policyService: policyService,
-		nodeService:   nodeService,
-		jwtSecret:     jwtSecret,
+		adminService:    adminService,
+		tenantService:   tenantService,
+		policyService:   policyService,
+		nodeService:     nodeService,
+		identityService: identityService,
+		jwtSecret:       jwtSecret,
 	}
 }
 
@@ -319,22 +323,34 @@ func (h *Handler) ListAccessPolicies(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CreateAccessPolicy(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
-	var input struct {
-		Name     string `json:"name"`
-		Effect   string `json:"effect"`
-		Priority int    `json:"priority"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	var policy models.AccessPolicy
+	if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
 		common.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	policy, err := h.policyService.CreateAccessPolicy(tenantID, input.Name, input.Effect, input.Priority)
+	created, err := h.policyService.CreateAccessPolicy(tenantID, &policy)
 	if err != nil {
 		common.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	common.Success(w, http.StatusCreated, policy)
+	common.Success(w, http.StatusCreated, created)
+}
+
+func (h *Handler) UpdateAccessPolicy(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.GetTenantID(r.Context())
+	var policy models.AccessPolicy
+	if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
+		common.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	updated, err := h.policyService.UpdateAccessPolicy(tenantID, &policy)
+	if err != nil {
+		common.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	common.Success(w, http.StatusOK, updated)
 }
 
 func (h *Handler) DeleteAccessPolicy(w http.ResponseWriter, r *http.Request) {
@@ -474,4 +490,83 @@ func (h *Handler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	common.Success(w, http.StatusOK, map[string]string{"message": "node deleted"})
+}
+func (h *Handler) SearchIdentity(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.GetTenantID(r.Context())
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		common.Error(w, http.StatusBadRequest, "missing query parameter q")
+		return
+	}
+
+	tenant, err := h.tenantService.GetTenantByID(tenantID)
+	if err != nil {
+		common.Error(w, http.StatusNotFound, "tenant not found")
+		return
+	}
+
+	if tenant.GoogleServiceAccountKey == "" || tenant.GoogleAdminEmail == "" {
+		common.Error(w, http.StatusBadRequest, "google identity not configured for this tenant")
+		return
+	}
+
+	// If it doesn't look like JSON, try to decrypt it
+	if !strings.HasPrefix(strings.TrimSpace(tenant.GoogleServiceAccountKey), "{") {
+		if err := h.tenantService.DecryptTenantConfig(tenant); err != nil {
+			log.Printf("failed to decrypt identity configuration for tenant %s: %v", tenantID, err)
+			common.Error(w, http.StatusInternalServerError, "failed to decrypt identity configuration. please re-configure google identity.")
+			return
+		}
+	}
+
+	// Double check it's JSON now
+	if !strings.HasPrefix(strings.TrimSpace(tenant.GoogleServiceAccountKey), "{") {
+		log.Printf("identity configuration for tenant %s is not a valid JSON after decryption", tenantID)
+		common.Error(w, http.StatusBadRequest, "invalid identity configuration format. please re-upload your service account key.")
+		return
+	}
+
+	// Search Users
+	users, err := h.identityService.SearchGoogleUsers(r.Context(), []byte(tenant.GoogleServiceAccountKey), tenant.GoogleAdminEmail, query)
+	if err != nil {
+		log.Printf("failed to search users: %v", err)
+	}
+
+	// Search Groups
+	groups, err := h.identityService.SearchGoogleGroups(r.Context(), []byte(tenant.GoogleServiceAccountKey), tenant.GoogleAdminEmail, query)
+	if err != nil {
+		log.Printf("failed to search groups: %v", err)
+	}
+
+	var results []struct {
+		Type  string `json:"type"`
+		Value string `json:"value"`
+		Label string `json:"label"`
+	}
+
+	for _, u := range users {
+		results = append(results, struct {
+			Type  string `json:"type"`
+			Value string `json:"value"`
+			Label string `json:"label"`
+		}{
+			Type:  "user",
+			Value: u.Email,
+			Label: fmt.Sprintf("%s (%s)", u.Name, u.Email),
+		})
+	}
+
+	for _, g := range groups {
+		results = append(results, struct {
+			Type  string `json:"type"`
+			Value string `json:"value"`
+			Label string `json:"label"`
+		}{
+			Type:  "group",
+			Value: g,
+			Label: g,
+		})
+	}
+
+	common.Success(w, http.StatusOK, results)
 }

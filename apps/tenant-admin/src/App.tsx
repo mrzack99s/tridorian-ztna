@@ -152,25 +152,7 @@ const App: React.FC = () => {
         } catch (err) { console.error(err); }
     };
 
-    const handleCreatePolicy = async (policy: Partial<AccessPolicy>) => {
-        const res = await fetch('/api/v1/policies/access', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(policy)
-        });
-        if (res.ok) fetchPolicies();
-        else alert('Failed to create policy');
-    };
 
-    const handleDeletePolicy = async (id: string) => {
-        if (!confirm('Are you sure?')) return;
-        await fetch('/api/v1/policies/access', {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id })
-        });
-        fetchPolicies();
-    };
 
     const handleCreateNode = async (name: string): Promise<string | null> => {
         const res = await fetch('/api/v1/nodes', {
@@ -259,7 +241,7 @@ const App: React.FC = () => {
             case 'dashboard': return <DashboardView tenant={tenant} />;
             case 'users': return <UsersView />;
             case 'signin_policies': return <SignInPoliciesView policies={signInPolicies} onRefresh={fetchSignInPolicies} />;
-            case 'access_policies': return <PoliciesView policies={accessPolicies} onCreate={handleCreatePolicy} onDelete={handleDeletePolicy} />;
+            case 'access_policies': return <PoliciesView policies={accessPolicies} onRefresh={fetchPolicies} />;
             case 'nodes': return <NodesView nodes={nodes} onCreate={handleCreateNode} onDelete={handleDeleteNode} />;
             case 'admins': return <AdminsView admins={admins} onCreate={handleCreateAdmin} onDelete={handleDeleteAdmin} onUpdate={handleUpdateAdmin} />;
             case 'settings': return <SettingsView tenant={tenant} onRefresh={checkSession} />;

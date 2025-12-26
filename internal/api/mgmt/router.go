@@ -20,9 +20,10 @@ func NewRouter(db *gorm.DB, jwtSecret string) *Router {
 	tenantService := services.NewTenantService(db)
 	policyService := services.NewPolicyService(db)
 	nodeService := services.NewNodeService(db)
+	identityService := services.NewIdentityService()
 
 	return &Router{
-		handler:   NewHandler(adminService, tenantService, policyService, nodeService, jwtSecret),
+		handler:   NewHandler(adminService, tenantService, policyService, nodeService, identityService, jwtSecret),
 		jwtSecret: jwtSecret,
 	}
 }
@@ -65,6 +66,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		"/api/v1/policies/access",
 		"/api/v1/policies/sign-in",
 		"/api/v1/nodes",
+		"/api/v1/identity/search",
 	}
 
 	isTenantRoute := false
@@ -119,6 +121,8 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					r.handler.ListAccessPolicies(w, req)
 				} else if req.Method == "POST" {
 					r.handler.CreateAccessPolicy(w, req)
+				} else if req.Method == "PATCH" {
+					r.handler.UpdateAccessPolicy(w, req)
 				} else if req.Method == "DELETE" {
 					r.handler.DeleteAccessPolicy(w, req)
 				}
@@ -143,6 +147,10 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				} else if req.Method == "DELETE" {
 					r.handler.DeleteNode(w, req)
 				}
+
+			// Identity Management
+			case path == "/api/v1/identity/search" && req.Method == "GET":
+				r.handler.SearchIdentity(w, req)
 
 			default:
 				w.WriteHeader(http.StatusNotFound)
