@@ -80,3 +80,4 @@ pnpm-debug.log*
 
 # Binary
 apps/ztna-client/bin/*
+apps/ztna-client/ztna-client

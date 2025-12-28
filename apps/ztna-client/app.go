@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/tls"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -26,6 +27,9 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/crypto/chacha20poly1305"
 )
+
+//go:embed callback.html
+var callbackHTML string
 
 // App struct
 type App struct {
@@ -133,7 +137,9 @@ func (a *App) Greet(domain string) string {
 		if token != "" {
 			a.authToken = token
 			a.userEmail = email
-			w.Write([]byte("<html><body style='background:#1e1b4b;color:#fff;font-family:sans-serif;text-align:center;padding-top:50px;'><h1>Login Successful</h1><p>You can close this window and return to Tridorian ZTNA.</p><script>setTimeout(function(){window.close()}, 2000);</script></body></html>"))
+			// Serve embedded callback HTML page
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write([]byte(callbackHTML))
 			successChan <- fmt.Sprintf("Logged in as %s", email)
 		} else {
 			errChan <- fmt.Errorf("login failed: no token received")
