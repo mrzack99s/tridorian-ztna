@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"tridorian-ztna/internal/models"
+	"tridorian-ztna/pkg/utils"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -64,23 +65,27 @@ func (s *AdminService) ChangePassword(id uuid.UUID, oldPassword, newPassword str
 	admin.ChangePasswordRequired = false
 	return s.db.Save(&admin).Error
 }
-func (s *AdminService) CreateAdmin(tenantID uuid.UUID, name, email, password string) (*models.Administrator, error) {
+func (s *AdminService) CreateAdmin(tenantID uuid.UUID, name, email, password string, role models.AdminRole) (*models.Administrator, string, error) {
 	admin := &models.Administrator{
 		BaseTenant: models.BaseTenant{TenantID: tenantID},
 		Name:       name,
 		Email:      email,
-		Role:       models.RoleAdmin,
+		Role:       role,
+	}
+
+	if password == "" {
+		password = utils.GenerateRandomPassword(12)
 	}
 
 	if err := admin.SetPassword(password); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	if err := s.db.Create(admin).Error; err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	return admin, nil
+	return admin, password, nil
 }
 
 func (s *AdminService) DeleteAdmin(tenantID uuid.UUID, adminID uuid.UUID) error {
@@ -88,6 +93,12 @@ func (s *AdminService) DeleteAdmin(tenantID uuid.UUID, adminID uuid.UUID) error 
 	return s.db.Scopes(models.TenantScope(tenantID)).Delete(&models.Administrator{}, "id = ?", adminID).Error
 }
 
-func (s *AdminService) UpdateAdmin(tenantID uuid.UUID, adminID uuid.UUID, name string) error {
-	return s.db.Scopes(models.TenantScope(tenantID)).Model(&models.Administrator{}).Where("id = ?", adminID).Update("name", name).Error
+func (s *AdminService) UpdateAdmin(tenantID uuid.UUID, adminID uuid.UUID, name string, role models.AdminRole) error {
+	updates := map[string]interface{}{
+		"name": name,
+	}
+	if role != "" {
+		updates["role"] = role
+	}
+	return s.db.Scopes(models.TenantScope(tenantID)).Model(&models.Administrator{}).Where("id = ?", adminID).Updates(updates).Error
 }

@@ -23,7 +23,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onLogin }) => {
                     <CardContent>
                         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 3 }}>
                             <CloudIcon sx={{ color: '#1a73e8', fontSize: 48, mb: 1 }} />
-                            <Typography variant="h5" sx={{ fontWeight: 700 }}>Tenant Admin</Typography>
+                            <Typography variant="h5" sx={{ fontWeight: 700 }}>Tridorian Console</Typography>
                             <Typography variant="body2" color="text.secondary">Sign in to manage your organization</Typography>
                         </Box>
                         <form onSubmit={handleSubmit}>

@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package gateway.v1;
+
+option go_package = "tridorian-ztna/internal/proto/gateway/v1";
+
+service GatewayService {
+  // Register performs the initial enrollment of a gateway
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  
+  // Heartbeat sends status updates
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // GetConfig retrieves the configuration for the gateway
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+
+  // GetSessionIP requests a sticky IP for a user connect to this gateway
+  rpc GetSessionIP(GetSessionIPRequest) returns (GetSessionIPResponse);
+
+  // SyncSessions reports the current active sessions on the gateway
+  rpc SyncSessions(SyncSessionsRequest) returns (SyncSessionsResponse);
+}
+
+message GetSessionIPRequest {
+  string auth_token = 1; // Gateway auth token
+  string user_id = 2;
+  string user_email = 3;
+}
+
+message GetSessionIPResponse {
+  string ip_address = 1;
+}
+
+message SyncSessionsRequest {
+  string auth_token = 1;
+  message Session {
+    string user_id = 1;
+    string user_email = 2;
+    string ip_address = 3;
+    int64 connected_at = 4;
+  }
+  repeated Session sessions = 2;
+}
+
+message SyncSessionsResponse {
+  bool success = 1;
+}
+
+message RegisterRequest {
+  string node_id = 1;
+  string hostname = 2;
+  string device_hash = 3;
+}
+
+message RegisterResponse {
+  string auth_token = 1;
+}
+
+message HeartbeatRequest {
+  string auth_token = 1;
+  string status = 2;
+  string config_hash = 3; // Current config hash
+}
+
+message HeartbeatResponse {
+  bool success = 1;
+  bool config_update_available = 2; // Signal if update is needed
+}
+
+message GetConfigRequest {
+  string auth_token = 1;
+}
+
+message GetConfigResponse {
+  string vpn_cidr = 1;
+  string public_key_pem = 2;
+  string config_hash = 3;
+  
+  message Policy {
+    string name = 1;
+    string action = 2;
+    string source_tag_type = 3;
+    string source_match_value = 4;
+    string destination_tag_type = 5;
+    string destination_match_value = 6;
+    int32 priority = 7;
+  }
+  
+  repeated Policy policies = 4;
+  int64 max_bandwidth_mbps = 5;
+}

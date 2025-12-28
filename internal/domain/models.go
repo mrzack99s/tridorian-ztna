@@ -11,7 +11,7 @@ type Tenant struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-type AgentNode struct {
+type GatewayNode struct {
 	ID        string    `json:"id" gorm:"primaryKey"`
 	TenantID  string    `json:"tenant_id" gorm:"index"`
 	Hostname  string    `json:"hostname"`

@@ -6,28 +6,58 @@ import (
 	"tridorian-ztna/internal/models"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
 type PolicyService struct {
-	db *gorm.DB
+	db    *gorm.DB
+	cache *redis.Client
 }
 
-func NewPolicyService(db *gorm.DB) *PolicyService {
-	return &PolicyService{db: db}
+func NewPolicyService(db *gorm.DB, cache *redis.Client) *PolicyService {
+	return &PolicyService{db: db, cache: cache}
 }
 
 func (s *PolicyService) ListAccessPolicies(tenantID uuid.UUID) ([]models.AccessPolicy, error) {
 	var policies []models.AccessPolicy
 	if err := s.db.Scopes(models.TenantScope(tenantID)).
+		Preload("DestinationApp").
+		Preload("DestinationApp.CIDRs").
+		Preload("Nodes").
 		Order("priority asc").
 		Find(&policies).Error; err != nil {
 		return nil, err
 	}
 
 	for i := range policies {
-		if policies[i].RootNodeID != uuid.Nil {
-			node, err := s.LoadNodeRecursive(policies[i].RootNodeID)
+		if policies[i].RootNodeID != nil {
+			node, err := s.LoadNodeRecursive(*policies[i].RootNodeID)
+			if err == nil {
+				policies[i].RootNode = *node
+			}
+		}
+	}
+	return policies, nil
+}
+
+func (s *PolicyService) ListAccessPoliciesByNodeID(tenantID uuid.UUID, nodeID uuid.UUID) ([]models.AccessPolicy, error) {
+	var policies []models.AccessPolicy
+	// Find policies where the node is in the association
+	if err := s.db.Scopes(models.TenantScope(tenantID)).
+		Preload("DestinationApp").
+		Preload("DestinationApp.CIDRs").
+		Preload("Nodes").
+		Joins("JOIN access_policy_nodes ON access_policy_nodes.access_policy_id = access_policies.id").
+		Where("access_policy_nodes.node_id = ? AND access_policies.enabled = ?", nodeID, true).
+		Order("priority asc").
+		Find(&policies).Error; err != nil {
+		return nil, err
+	}
+
+	for i := range policies {
+		if policies[i].RootNodeID != nil {
+			node, err := s.LoadNodeRecursive(*policies[i].RootNodeID)
 			if err == nil {
 				policies[i].RootNode = *node
 			}
@@ -42,9 +72,18 @@ func (s *PolicyService) CreateAccessPolicy(tenantID uuid.UUID, policy *models.Ac
 
 	s.setTenantIDOnTree(tenantID, &policy.RootNode)
 
-	if err := s.db.Session(&gorm.Session{FullSaveAssociations: true}).Create(policy).Error; err != nil {
+	// Create policy first, omitting Nodes to prevent insertion of empty Node objects
+	if err := s.db.Omit("Nodes").Create(policy).Error; err != nil {
 		return nil, err
 	}
+
+	// Update the Many-to-Many association if provided
+	if len(policy.Nodes) > 0 {
+		if err := s.db.Model(policy).Association("Nodes").Replace(policy.Nodes); err != nil {
+			return nil, err
+		}
+	}
+
 	return policy, nil
 }
 
@@ -55,7 +94,9 @@ func (s *PolicyService) UpdateAccessPolicy(tenantID uuid.UUID, policy *models.Ac
 	var oldPolicy models.AccessPolicy
 	if err := s.db.First(&oldPolicy, "id = ?", policy.ID).Error; err == nil {
 		// 2. Delete the old tree recursively
-		s.DeleteNodeRecursive(oldPolicy.RootNodeID)
+		if oldPolicy.RootNodeID != nil {
+			s.DeleteNodeRecursive(*oldPolicy.RootNodeID)
+		}
 	}
 
 	s.setTenantIDOnTree(tenantID, &policy.RootNode)
@@ -63,9 +104,45 @@ func (s *PolicyService) UpdateAccessPolicy(tenantID uuid.UUID, policy *models.Ac
 	// 3. Clear IDs in the new tree to force recreation
 	s.clearIDsRecursive(&policy.RootNode)
 
-	if err := s.db.Session(&gorm.Session{FullSaveAssociations: true}).Save(policy).Error; err != nil {
+	// Update the policy fields (except associations)
+	if err := s.db.Omit("Nodes").Save(policy).Error; err != nil {
 		return nil, err
 	}
+
+	// Check existing associations to avoid redundant updates
+	var currentNodes []models.Node
+	// Create a clean struct to ensure GORM only uses the ID for the lookup
+	lookupPolicy := &models.AccessPolicy{}
+	lookupPolicy.ID = policy.ID
+
+	if err := s.db.Model(lookupPolicy).Association("Nodes").Find(&currentNodes); err != nil {
+		return nil, err
+	}
+
+	shouldUpdateNodes := false
+	if len(currentNodes) != len(policy.Nodes) {
+		shouldUpdateNodes = true
+	} else {
+		// Maps for O(n) lookup
+		existingIDs := make(map[uuid.UUID]bool)
+		for _, n := range currentNodes {
+			existingIDs[n.ID] = true
+		}
+		for _, n := range policy.Nodes {
+			if !existingIDs[n.ID] {
+				shouldUpdateNodes = true
+				break
+			}
+		}
+	}
+
+	// Update the Many-to-Many association explicitly only if changed
+	if shouldUpdateNodes {
+		if err := s.db.Model(policy).Association("Nodes").Replace(policy.Nodes); err != nil {
+			return nil, err
+		}
+	}
+
 	return policy, nil
 }
 

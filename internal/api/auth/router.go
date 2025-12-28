@@ -4,21 +4,25 @@ import (
 	"net/http"
 	"tridorian-ztna/internal/api/middleware"
 	"tridorian-ztna/internal/services"
+	"tridorian-ztna/pkg/geoip"
 	"tridorian-ztna/pkg/utils"
 
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
 type Router struct {
 	handler          *Handler
 	tenantMiddleware func(http.Handler) http.Handler
+	publicKey        interface{}
 }
 
-func NewRouter(db *gorm.DB) *Router {
+func NewRouter(db *gorm.DB, cache *redis.Client, geoIP *geoip.GeoIP, privateKey, publicKey interface{}) *Router {
 	tenantService := services.NewTenantService(db)
 	return &Router{
-		handler:          NewHandler(db),
+		handler:          NewHandler(db, cache, geoIP, privateKey, publicKey),
 		tenantMiddleware: middleware.ResolveTenantByHost(tenantService),
+		publicKey:        publicKey,
 	}
 }
 
@@ -42,7 +46,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if path == "/auth/backoffice/me" {
-		middleware.JWTAuth(r.handler.jwtSecret, utils.PurposeBackoffice)(http.HandlerFunc(r.handler.MeBackoffice)).ServeHTTP(w, req)
+		middleware.JWTAuth(r.publicKey, utils.PurposeBackoffice)(http.HandlerFunc(r.handler.MeBackoffice)).ServeHTTP(w, req)
 		return
 	}
 
@@ -62,7 +66,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if path == "/auth/mgmt/me" {
-		middleware.JWTAuth(r.handler.jwtSecret, utils.PurposeManagement)(http.HandlerFunc(r.handler.MeManagement)).ServeHTTP(w, req)
+		middleware.JWTAuth(r.publicKey, utils.PurposeManagement)(http.HandlerFunc(r.handler.MeManagement)).ServeHTTP(w, req)
 		return
 	}
 
@@ -70,12 +74,16 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	tenantBoundHandlers := http.NewServeMux()
 
 	// 2. Target Authentication (For VPN users via Google Identity)
-	tenantBoundHandlers.HandleFunc("/auth/target/login", func(w http.ResponseWriter, req *http.Request) {
+	tenantBoundHandlers.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		r.handler.LoginTarget(w, req)
 	})
 
-	tenantBoundHandlers.HandleFunc("/auth/target/callback", func(w http.ResponseWriter, req *http.Request) {
+	tenantBoundHandlers.HandleFunc("/callback", func(w http.ResponseWriter, req *http.Request) {
 		r.handler.CallbackTarget(w, req)
+	})
+
+	tenantBoundHandlers.HandleFunc("/gateways", func(w http.ResponseWriter, req *http.Request) {
+		middleware.JWTAuth(r.publicKey, utils.PurposeTarget)(http.HandlerFunc(r.handler.ListGateways)).ServeHTTP(w, req)
 	})
 
 	// Public Health Check (Optional, but good to have inside the mux or outside)

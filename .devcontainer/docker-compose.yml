@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspace:cached
+    
+    # Overrides default command so things don't shut down after the process ends.
+    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    # Ensure dependencies are started
+    depends_on:
+      - postgres
+      - valkey
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+      - "5443:5443"
+      - "6500:6500/tcp"
+      - "6500:6500/udp"
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: devuser
+      POSTGRES_PASSWORD: P@ssw0rd
+      POSTGRES_DB: trivpn-trimanaged
+    ports:
+      - "5432:5432"
+
+  valkey:
+    image: valkey/valkey:9-alpine
+    command: valkey-server --requirepass "P@ssw0rd"
+    ports:
+      - "6379:6379"

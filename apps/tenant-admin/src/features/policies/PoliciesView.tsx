@@ -22,7 +22,10 @@ import {
     ToggleButtonGroup,
     Tooltip,
     Autocomplete,
-    createFilterOptions
+    createFilterOptions,
+    TablePagination,
+    useMediaQuery,
+    useTheme
 } from '@mui/material';
 import {
     Add as AddIcon,
@@ -35,9 +38,11 @@ import {
     Group as GroupIcon,
     KeyboardArrowRight as ArrowIcon,
     Security as SecurityIcon,
-    Dns as DnsIcon
+    Dns as DnsIcon,
+    PlayArrow as PlayArrowIcon,
+    Pause as PauseIcon
 } from '@mui/icons-material';
-import { AccessPolicy, PolicyNode, PolicyCondition } from '../../types';
+import { AccessPolicy, PolicyNode, PolicyCondition, Application, Node } from '../../types';
 
 interface PoliciesViewProps {
     policies: AccessPolicy[];
@@ -46,14 +51,18 @@ interface PoliciesViewProps {
 
 const CONDITION_TYPES = [
     { value: 'User', label: 'User / Group', icon: <GroupIcon fontSize="small" /> },
-    { value: 'Network', label: 'Network / IP', icon: <PublicIcon fontSize="small" /> },
     { value: 'Device', label: 'Device / OS', icon: <DeviceHubIcon fontSize="small" /> },
 ];
 
-const OPS: Record<string, { label: string; value: string }[]> = {
-    'User': [{ label: 'In Group', value: 'in_group' }, { label: 'Email Ends With', value: 'email_suffix' }],
-    'Network': [{ label: 'IP in CIDR', value: 'cidr' }, { label: 'Country Equals', value: 'country' }],
-    'Device': [{ label: 'OS Equals', value: 'os' }, { label: 'Is Managed', value: 'managed' }],
+const OS_OPTIONS = [
+    { value: 'windows', label: 'Windows (windows)' },
+    { value: 'linux', label: 'Linux (linux)' },
+    { value: 'darwin', label: 'macOS (darwin)' },
+];
+
+const OPS: Record<string, { label: string; value: string; field: string }[]> = {
+    'User': [{ label: 'In Group', value: 'in_group', field: 'group' }, { label: 'Is User', value: 'is', field: 'email' }],
+    'Device': [{ label: 'OS Equals', value: 'os', field: 'os' }],
 };
 
 const COUNTRIES = [
@@ -364,7 +373,7 @@ const NodeEditor: React.FC<{
             const res = await fetch(`/api/v1/identity/search?q=${encodeURIComponent(query)}`);
             const data = await res.json();
             if (data.success) {
-                setIdentityOptions(data.data);
+                setIdentityOptions(data.data || []);
             }
         } catch (err) {
             console.error('Search failed', err);
@@ -394,12 +403,12 @@ const NodeEditor: React.FC<{
                         value={node.operator}
                         exclusive
                         onChange={(_, val) => val && onChange({ ...node, operator: val })}
-                        sx={{ 
-                            bgcolor: '#fff', 
-                            '& .MuiToggleButton-root': { 
-                                px: 2, 
+                        sx={{
+                            bgcolor: '#fff',
+                            '& .MuiToggleButton-root': {
+                                px: 2,
                                 py: 0.5,
-                                fontWeight: 800, 
+                                fontWeight: 800,
                                 fontSize: '0.7rem',
                                 borderRadius: 1.5,
                                 border: '1px solid #f1f3f4',
@@ -420,34 +429,42 @@ const NodeEditor: React.FC<{
 
                 {isLeaf && (
                     <Grid container spacing={1} alignItems="center" sx={{ flexGrow: 1, width: '100%' }}>
-                        <Grid size={2.5}>
+                        <Grid size={{ xs: 12, md: 2.5 }}>
                             <TextField
                                 select
                                 fullWidth
                                 size="small"
                                 label="Type"
                                 value={node.condition?.type}
-                                onChange={(e) => onChange({ ...node, condition: { ...node.condition!, type: e.target.value, op: OPS[e.target.value][0].value, value: '' } })}
+                                onChange={(e) => {
+                                    const newType = e.target.value;
+                                    const defaultOp = OPS[newType][0];
+                                    onChange({ ...node, condition: { ...node.condition!, type: newType, op: defaultOp.value, field: defaultOp.field, value: '' } });
+                                }}
                                 sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                             >
                                 {CONDITION_TYPES.map(t => <MenuItem key={t.value} value={t.value} sx={{ gap: 1 }}>{t.icon} {t.label}</MenuItem>)}
                             </TextField>
                         </Grid>
-                        <Grid size={2.5}>
+                        <Grid size={{ xs: 12, md: 2.5 }}>
                             <TextField
                                 select
                                 fullWidth
                                 size="small"
                                 label="Operator"
                                 value={node.condition?.op}
-                                onChange={(e) => onChange({ ...node, condition: { ...node.condition!, op: e.target.value, value: '' } })}
+                                onChange={(e) => {
+                                    const newOp = e.target.value;
+                                    const opConfig = OPS[node.condition!.type].find(o => o.value === newOp);
+                                    onChange({ ...node, condition: { ...node.condition!, op: newOp, field: opConfig?.field || '', value: '' } });
+                                }}
                                 sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                             >
                                 {node.condition && (OPS[node.condition.type] || []).map(o => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
                             </TextField>
                         </Grid>
-                        <Grid size={6}>
-                            {node.condition?.type === 'User' && node.condition?.op === 'in_group' ? (
+                        <Grid size={{ xs: 12, md: 6 }}>
+                            {node.condition?.type === 'User' && (node.condition?.op === 'in_group' || node.condition?.op === 'is') ? (
                                 <Autocomplete
                                     freeSolo
                                     size="small"
@@ -463,7 +480,7 @@ const NodeEditor: React.FC<{
                                     renderInput={(params) => (
                                         <TextField
                                             {...params}
-                                            label="User / Group"
+                                            label={node.condition?.op === 'in_group' ? "Group" : "User Email"}
                                             placeholder="Search Google Identity..."
                                             sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                                             InputProps={{
@@ -487,18 +504,18 @@ const NodeEditor: React.FC<{
                                         </MenuItem>
                                     )}
                                 />
-                            ) : node.condition?.type === 'Network' && node.condition?.op === 'country' ? (
+                            ) : node.condition?.type === 'Device' && node.condition?.op === 'os' ? (
                                 <Autocomplete
                                     size="small"
-                                    options={COUNTRIES}
+                                    options={OS_OPTIONS}
                                     getOptionLabel={(option) => option.label}
-                                    value={COUNTRIES.find(c => c.code === node.condition?.value) || null}
-                                    onChange={(_, val) => onChange({ ...node, condition: { ...node.condition!, value: val?.code || '' } })}
+                                    value={OS_OPTIONS.find(o => o.value === node.condition?.value) || null}
+                                    onChange={(_, val) => onChange({ ...node, condition: { ...node.condition!, value: val?.value || '' } })}
                                     renderInput={(params) => (
                                         <TextField
                                             {...params}
-                                            label="Country"
-                                            placeholder="Search country..."
+                                            label="Operating System"
+                                            placeholder="Select OS..."
                                             sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                                         />
                                     )}
@@ -510,12 +527,12 @@ const NodeEditor: React.FC<{
                                     label="Value"
                                     value={node.condition?.value}
                                     onChange={(e) => onChange({ ...node, condition: { ...node.condition!, value: e.target.value } })}
-                                    placeholder={node.condition?.type === 'User' ? 'e.g. user@domain.com' : 'e.g. 192.168.1.0/24'}
+                                    placeholder={node.condition?.type === 'User' ? 'e.g. user@domain.com' : 'e.g. Value'}
                                     sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                                 />
                             )}
                         </Grid>
-                        <Grid size={1} sx={{ textAlign: 'right' }}>
+                        <Grid size={{ xs: 12, md: 1 }} sx={{ textAlign: 'right' }}>
                             {onDelete && (
                                 <IconButton size="small" color="error" onClick={onDelete} sx={{ '&:hover': { bgcolor: 'rgba(211, 47, 47, 0.04)' } }}>
                                     <DeleteIcon fontSize="small" />
@@ -546,13 +563,13 @@ const NodeEditor: React.FC<{
                         />
                     ))}
                     <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-                        <Button 
-                            size="small" 
-                            startIcon={<AddIcon />} 
-                            onClick={handleAddCondition} 
-                            variant="text" 
-                            sx={{ 
-                                fontSize: '0.75rem', 
+                        <Button
+                            size="small"
+                            startIcon={<AddIcon />}
+                            onClick={handleAddCondition}
+                            variant="text"
+                            sx={{
+                                fontSize: '0.75rem',
                                 fontWeight: 700,
                                 color: '#1a73e8',
                                 borderRadius: 2,
@@ -561,14 +578,14 @@ const NodeEditor: React.FC<{
                         >
                             Add Condition
                         </Button>
-                        <Button 
-                            size="small" 
-                            startIcon={<AddIcon />} 
-                            onClick={handleAddSubGroup} 
-                            variant="text" 
-                            color="secondary" 
-                            sx={{ 
-                                fontSize: '0.75rem', 
+                        <Button
+                            size="small"
+                            startIcon={<AddIcon />}
+                            onClick={handleAddSubGroup}
+                            variant="text"
+                            color="secondary"
+                            sx={{
+                                fontSize: '0.75rem',
                                 fontWeight: 700,
                                 borderRadius: 2
                             }}
@@ -583,22 +600,95 @@ const NodeEditor: React.FC<{
 };
 
 const PoliciesView: React.FC<PoliciesViewProps> = ({ policies, onRefresh }) => {
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+    const isSmallMobile = useMediaQuery(theme.breakpoints.down('sm'));
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingPolicy, setEditingPolicy] = useState<AccessPolicy | null>(null);
     const [loading, setLoading] = useState(false);
+    const [applications, setApplications] = useState<Application[]>([]);
+    const [nodes, setNodes] = useState<Node[]>([]);
     const [formData, setFormData] = useState<{
         name: string;
         priority: number;
         effect: 'allow' | 'deny';
-        destination: string;
+        destination_type: 'cidr' | 'app' | 'sni';
+        destination_cidr: string;
+        destination_app_id: string;
+        destination_sni: string;
         root_node: PolicyNode;
+        node_ids: string[];
     }>({
         name: '',
         priority: 10,
-        effect: 'allow',
-        destination: '',
-        root_node: { operator: 'AND', children: [] }
+        effect: 'deny',
+        destination_type: 'cidr',
+        destination_cidr: '',
+        destination_app_id: '',
+        destination_sni: '',
+        root_node: { operator: 'AND', children: [] },
+        node_ids: []
     });
+
+    // Pagination State
+    const [page, setPage] = useState(0);
+    const [rowsPerPage, setRowsPerPage] = useState(10);
+
+    const handleChangePage = (event: unknown, newPage: number) => {
+        setPage(newPage);
+    };
+
+    const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+        setRowsPerPage(parseInt(event.target.value, 10));
+        setPage(0);
+    };
+
+    const [confirmDialog, setConfirmDialog] = useState<{
+        open: boolean;
+        title: string;
+        message: string;
+        onConfirm: () => void;
+    }>({
+        open: false,
+        title: '',
+        message: '',
+        onConfirm: () => { },
+    });
+
+    React.useEffect(() => {
+        fetchApplications();
+        fetchNodes();
+    }, []);
+
+    const fetchApplications = async () => {
+        try {
+            const res = await fetch('/api/v1/applications');
+            const data = await res.json();
+            if (data.success && Array.isArray(data.data)) {
+                setApplications(data.data);
+            } else {
+                setApplications([]);
+            }
+        } catch (err) {
+            console.error('Failed to fetch applications', err);
+            setApplications([]); // Always set empty array on error
+        }
+    };
+
+    const fetchNodes = async () => {
+        try {
+            const res = await fetch('/api/v1/nodes');
+            const data = await res.json();
+            if (data.success && Array.isArray(data.data)) {
+                setNodes(data.data);
+            } else {
+                setNodes([]);
+            }
+        } catch (err) {
+            console.error('Failed to fetch nodes', err);
+            setNodes([]);
+        }
+    };
 
     const handleOpenDialog = (policy?: AccessPolicy) => {
         if (policy) {
@@ -607,17 +697,25 @@ const PoliciesView: React.FC<PoliciesViewProps> = ({ policies, onRefresh }) => {
                 name: policy.name,
                 priority: policy.priority,
                 effect: policy.effect as any,
-                destination: policy.destination || '',
-                root_node: policy.root_node || { operator: 'AND', children: [] }
+                destination_type: policy.destination_type || 'cidr',
+                destination_cidr: policy.destination_cidr || '',
+                destination_app_id: policy.destination_app_id || '',
+                destination_sni: policy.destination_sni || '',
+                root_node: policy.root_node || { operator: 'AND', children: [] },
+                node_ids: policy.nodes ? policy.nodes.map(n => n.id) : []
             });
         } else {
             setEditingPolicy(null);
             setFormData({
                 name: '',
-                priority: (policies.length + 1) * 10,
+                priority: (policies.length + 1) * 100,
                 effect: 'allow',
-                destination: '',
-                root_node: { operator: 'AND', children: [] }
+                destination_type: 'cidr',
+                destination_cidr: '',
+                destination_app_id: '',
+                destination_sni: '',
+                root_node: { operator: 'AND', children: [] },
+                node_ids: []
             });
         }
         setDialogOpen(true);
@@ -628,7 +726,10 @@ const PoliciesView: React.FC<PoliciesViewProps> = ({ policies, onRefresh }) => {
         try {
             const url = '/api/v1/policies/access';
             const method = editingPolicy ? 'PATCH' : 'POST';
-            const body = editingPolicy ? { ...formData, id: editingPolicy.id } : formData;
+            // Explicitly include enabled status to prevent resetting it to false (go zero value) on update
+            const body = editingPolicy
+                ? { ...formData, id: editingPolicy.id, enabled: editingPolicy.enabled }
+                : { ...formData, enabled: true };
 
             const res = await fetch(url, {
                 method,
@@ -647,14 +748,48 @@ const PoliciesView: React.FC<PoliciesViewProps> = ({ policies, onRefresh }) => {
         }
     };
 
-    const handleDelete = async (id: string) => {
-        if (!window.confirm('Are you sure you want to delete this policy?')) return;
-        try {
-            const res = await fetch(`/api/v1/policies/access?id=${id}`, { method: 'DELETE' });
-            if (res.ok) onRefresh();
-        } catch (err) {
-            console.error('Delete failed', err);
-        }
+    const handleDelete = (id: string) => {
+        setConfirmDialog({
+            open: true,
+            title: 'Delete Policy',
+            message: 'Are you sure you want to delete this policy? This action cannot be undone.',
+            onConfirm: async () => {
+                try {
+                    const res = await fetch(`/api/v1/policies/access?id=${id}`, { method: 'DELETE' });
+                    if (res.ok) onRefresh();
+                } catch (err) {
+                    console.error('Delete failed', err);
+                }
+                setConfirmDialog(prev => ({ ...prev, open: false }));
+            }
+        });
+    };
+
+    const handleToggleEnabled = (policy: AccessPolicy) => {
+        const isEnabled = policy.enabled !== false;
+        const action = isEnabled ? 'disable' : 'enable';
+
+        setConfirmDialog({
+            open: true,
+            title: `${isEnabled ? 'Disable' : 'Enable'} Policy`,
+            message: `Are you sure you want to ${action} this policy?`,
+            onConfirm: async () => {
+                try {
+                    const res = await fetch('/api/v1/policies/access', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ...policy, enabled: !isEnabled })
+                    });
+
+                    if (res.ok) {
+                        onRefresh();
+                    }
+                } catch (err) {
+                    console.error('Toggle failed', err);
+                }
+                setConfirmDialog(prev => ({ ...prev, open: false }));
+            }
+        });
     };
 
     const renderConditionSummary = (node: PolicyNode) => {
@@ -710,61 +845,194 @@ const PoliciesView: React.FC<PoliciesViewProps> = ({ policies, onRefresh }) => {
             </Box>
 
             <Grid container spacing={3}>
-                {policies.map((policy) => (
+                {policies.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage).map((policy) => (
                     <Grid key={policy.id} size={12}>
                         <Card sx={{
                             borderRadius: 4,
                             border: '1px solid #eef0f2',
                             boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
                             transition: 'all 0.2s',
+                            opacity: policy.enabled === false ? 0.7 : 1,
+                            bgcolor: '#fff',
                             '&:hover': {
                                 boxShadow: '0 8px 16px rgba(0,0,0,0.06)',
-                                borderColor: 'primary.main'
+                                borderColor: 'primary.main',
+                                transform: 'translateY(-2px)'
                             }
                         }}>
-                            <CardContent sx={{ p: 3 }}>
-                                <Grid container spacing={2} alignItems="center">
-                                    <Grid size={4}>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                            <Box sx={{ p: isSmallMobile ? 2 : 3 }}>
+                                {/* Header Row: Status, Name, Priority, Actions */}
+                                <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 2 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                        <Tooltip title={policy.effect === 'allow' ? "Allow Access" : "Deny Access"}>
                                             <Box sx={{
-                                                width: 48,
-                                                height: 48,
-                                                borderRadius: 3,
-                                                bgcolor: policy.effect === 'allow' ? 'success.light' : 'error.light',
+                                                width: 40,
+                                                height: 40,
+                                                borderRadius: '50%',
+                                                bgcolor: policy.effect === 'allow' ? 'success.soft' : 'error.soft',
+                                                color: policy.effect === 'allow' ? 'success.main' : 'error.main',
                                                 display: 'flex',
                                                 alignItems: 'center',
                                                 justifyContent: 'center',
-                                                color: '#fff',
-                                                opacity: 0.9
+                                                flexShrink: 0,
+                                                border: `1px solid ${policy.effect === 'allow' ? '#b4f0b8' : '#fad4d4'}`
                                             }}>
                                                 {policy.effect === 'allow' ? <CheckCircleIcon /> : <BlockIcon />}
                                             </Box>
-                                            <Box>
-                                                <Typography variant="h6" sx={{ fontWeight: 700 }}>{policy.name}</Typography>
-                                                <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                                    Priority: {policy.priority} • <DnsIcon sx={{ fontSize: 12 }} /> {policy.destination || 'All Destinations'}
+                                        </Tooltip>
+                                        <Box>
+                                            <Typography variant="h6" sx={{ fontWeight: 800, fontSize: isSmallMobile ? '1rem' : '1.1rem', lineHeight: 1.2 }}>
+                                                {policy.name}
+                                            </Typography>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                                                <Chip
+                                                    label={policy.enabled !== false ? "Active" : "Disabled"}
+                                                    size="small"
+                                                    color={policy.enabled !== false ? "success" : "default"}
+                                                    sx={{ height: 20, fontSize: '0.65rem', fontWeight: 700, borderRadius: 1 }}
+                                                />
+                                                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                                                    Priority: {policy.priority}
                                                 </Typography>
                                             </Box>
                                         </Box>
-                                    </Grid>
-                                    <Grid size={6}>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                            <Chip label="IF" size="small" sx={{ fontWeight: 900, bgcolor: 'grey.100', color: 'grey.700', borderRadius: 1 }} />
-                                            <Box sx={{ display: 'flex', flexWrap: 'wrap' }}>
-                                                {policy.root_node ? renderConditionSummary(policy.root_node) : <Typography variant="caption" color="text.secondary">No conditions (Always applies)</Typography>}
+                                    </Box>
+
+                                    {/* Action Buttons */}
+                                    <Box sx={{ display: 'flex', gap: 1 }}>
+                                        {!isSmallMobile && (
+                                            <>
+                                                <Tooltip title={policy.enabled !== false ? "Disable" : "Enable"}>
+                                                    <IconButton
+                                                        size="small"
+                                                        onClick={() => handleToggleEnabled(policy)}
+                                                        sx={{ color: 'text.secondary', border: '1px solid #e0e0e0', borderRadius: 2 }}
+                                                    >
+                                                        {policy.enabled !== false ? <PauseIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
+                                                    </IconButton>
+                                                </Tooltip>
+                                                <Tooltip title="Edit Policy">
+                                                    <IconButton
+                                                        size="small"
+                                                        onClick={() => handleOpenDialog(policy)}
+                                                        sx={{ color: 'primary.main', border: '1px solid #e0e0e0', bgcolor: 'primary.50', borderRadius: 2 }}
+                                                    >
+                                                        <EditIcon fontSize="small" />
+                                                    </IconButton>
+                                                </Tooltip>
+                                            </>
+                                        )}
+                                        <Tooltip title="Delete Policy">
+                                            <IconButton
+                                                size="small"
+                                                onClick={() => handleDelete(policy.id)}
+                                                sx={{ color: 'error.main', border: '1px solid #e0e0e0', bgcolor: 'error.50', borderRadius: 2 }}
+                                            >
+                                                <DeleteIcon fontSize="small" />
+                                            </IconButton>
+                                        </Tooltip>
+                                    </Box>
+                                </Box>
+
+                                <Divider sx={{ my: 2, borderStyle: 'dashed' }} />
+
+                                {/* Info Grid: Source, Destination, Gateway */}
+                                <Grid container spacing={3}>
+                                    {/* Source / Conditions */}
+                                    <Grid item xs={12} md={5}>
+                                        <Box>
+                                            <Typography variant="caption" sx={{ textTransform: 'uppercase', color: 'text.secondary', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                                                <GroupIcon fontSize="inherit" /> Source (Conditions)
+                                            </Typography>
+                                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                                                {policy.root_node ? renderConditionSummary(policy.root_node) : <Typography variant="body2" color="text.secondary">Any Source</Typography>}
                                             </Box>
                                         </Box>
                                     </Grid>
-                                    <Grid size={2} sx={{ textAlign: 'right' }}>
-                                        <IconButton size="small" onClick={() => handleOpenDialog(policy)} sx={{ mr: 1, color: 'primary.main', bgcolor: 'rgba(26, 115, 232, 0.05)' }}>
-                                            <EditIcon fontSize="small" />
-                                        </IconButton>
-                                        <IconButton size="small" onClick={() => handleDelete(policy.id)} sx={{ color: 'error.main', bgcolor: 'rgba(211, 47, 47, 0.05)' }}>
-                                            <DeleteIcon fontSize="small" />
-                                        </IconButton>
+
+                                    {/* Destination */}
+                                    <Grid item xs={12} sm={6} md={4}>
+                                        <Box>
+                                            <Typography variant="caption" sx={{ textTransform: 'uppercase', color: 'text.secondary', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                                                <PublicIcon fontSize="inherit" /> Destination
+                                            </Typography>
+                                            <Box sx={{ p: 1, bgcolor: '#f8f9fa', borderRadius: 2, border: '1px solid #eef0f2', display: 'inline-block' }}>
+                                                {policy.destination_type === 'cidr' && (
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                        <DnsIcon fontSize="small" color="action" />
+                                                        <Box>
+                                                            <Typography variant="caption" display="block" color="text.secondary">CIDR Block</Typography>
+                                                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>{policy.destination_cidr}</Typography>
+                                                        </Box>
+                                                    </Box>
+                                                )}
+                                                {(!policy.destination_type || policy.destination_type === 'none') && (
+                                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>All Network Traffic</Typography>
+                                                )}
+                                                {policy.destination_type === 'app' && (
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                        <DnsIcon fontSize="small" color="action" />
+                                                        <Box>
+                                                            <Typography variant="caption" display="block" color="text.secondary">Application</Typography>
+                                                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>{policy.destination_app?.name}</Typography>
+                                                        </Box>
+                                                    </Box>
+                                                )}
+                                            </Box>
+                                        </Box>
+                                    </Grid>
+
+                                    {/* Gateways */}
+                                    <Grid item xs={12} sm={6} md={3}>
+                                        <Box>
+                                            <Typography variant="caption" sx={{ textTransform: 'uppercase', color: 'text.secondary', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                                                <DeviceHubIcon fontSize="inherit" /> Gateway
+                                            </Typography>
+                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                                {policy.nodes && policy.nodes.length > 0 ? (
+                                                    policy.nodes.map(n => (
+                                                        <Chip
+                                                            key={n.id}
+                                                            label={n.name}
+                                                            size="small"
+                                                            icon={<DnsIcon style={{ fontSize: 12 }} />}
+                                                            sx={{ justifyContent: 'flex-start', borderRadius: 1.5, bgcolor: '#f8f9fa', fontWeight: 500, height: 24 }}
+                                                        />
+                                                    ))
+                                                ) : (
+                                                    <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                                                        All Gateways
+                                                    </Typography>
+                                                )}
+                                            </Box>
+                                        </Box>
                                     </Grid>
                                 </Grid>
-                            </CardContent>
+
+                                {/* Mobile Actions Row */}
+                                {isSmallMobile && (
+                                    <Box sx={{ display: 'flex', gap: 1, mt: 3, pt: 2, borderTop: '1px solid #f1f3f4' }}>
+                                        <Button
+                                            size="small"
+                                            fullWidth
+                                            variant="outlined"
+                                            onClick={() => handleToggleEnabled(policy)}
+                                            startIcon={policy.enabled !== false ? <PauseIcon /> : <PlayArrowIcon />}
+                                        >
+                                            {policy.enabled !== false ? "Disable" : "Enable"}
+                                        </Button>
+                                        <Button
+                                            size="small"
+                                            fullWidth
+                                            variant="outlined"
+                                            onClick={() => handleOpenDialog(policy)}
+                                            startIcon={<EditIcon />}
+                                        >
+                                            Edit
+                                        </Button>
+                                    </Box>
+                                )}
+                            </Box>
                         </Card>
                     </Grid>
                 ))}
@@ -782,13 +1050,34 @@ const PoliciesView: React.FC<PoliciesViewProps> = ({ policies, onRefresh }) => {
                 )}
             </Grid>
 
+            {/* Pagination Controls */}
+            {
+                policies.length > 0 && (
+                    <TablePagination
+                        component="div"
+                        count={policies.length}
+                        page={page}
+                        onPageChange={handleChangePage}
+                        rowsPerPage={rowsPerPage}
+                        onRowsPerPageChange={handleChangeRowsPerPage}
+                        labelRowsPerPage="Policies per page:"
+                        sx={{ mt: 2 }}
+                    />
+                )
+            }
+
             <Dialog
                 open={dialogOpen}
-                onClose={() => !loading && setDialogOpen(false)}
+                fullScreen={isMobile}
+                onClose={(_, reason) => {
+                    if (reason !== 'backdropClick' && !loading) {
+                        setDialogOpen(false);
+                    }
+                }}
                 maxWidth="md"
                 fullWidth
                 PaperProps={{
-                    sx: { borderRadius: 4, boxShadow: '0 24px 48px rgba(0,0,0,0.1)' }
+                    sx: { borderRadius: isMobile ? 0 : 4, minHeight: isMobile ? '100vh' : 'auto', boxShadow: '0 24px 48px rgba(0,0,0,0.1)' }
                 }}
             >
                 <DialogTitle sx={{ px: 4, pt: 4, pb: 2 }}>
@@ -797,8 +1086,8 @@ const PoliciesView: React.FC<PoliciesViewProps> = ({ policies, onRefresh }) => {
                     </Typography>
                 </DialogTitle>
                 <DialogContent sx={{ px: 4 }}>
-                    <Grid container spacing={3} sx={{ mt: 0.5 }}>
-                        <Grid size={8}>
+                    <Grid container spacing={3} sx={{ mt: 0.5, pt: 3 }}>
+                        <Grid size={{ xs: 12, md: 8 }}>
                             <TextField
                                 fullWidth
                                 label="Policy Name"
@@ -808,7 +1097,7 @@ const PoliciesView: React.FC<PoliciesViewProps> = ({ policies, onRefresh }) => {
                                 sx={{ '& .MuiOutlinedInput-root': { borderRadius: 3 } }}
                             />
                         </Grid>
-                        <Grid size={4}>
+                        <Grid size={{ xs: 12, md: 4 }}>
                             <TextField
                                 fullWidth
                                 type="number"
@@ -820,18 +1109,129 @@ const PoliciesView: React.FC<PoliciesViewProps> = ({ policies, onRefresh }) => {
                         </Grid>
 
                         <Grid size={12}>
-                            <TextField
-                                fullWidth
-                                label="Destination"
-                                title="Target CIDR, IP, or Service name"
-                                value={formData.destination}
-                                onChange={(e) => setFormData({ ...formData, destination: e.target.value })}
-                                placeholder="e.g. 10.0.0.0/24, internal-service.local, or admin-app"
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 3 } }}
-                            />
-                            <Typography variant="caption" color="text.secondary" sx={{ ml: 1, mt: 0.5, display: 'block' }}>
-                                Specify the target network resource (CIDR, IP, or Service name) this policy applies to.
+                            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 2, color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <DnsIcon sx={{ fontSize: 16 }} /> DEPLOYMENT SETTINGS
                             </Typography>
+                            <Autocomplete
+                                multiple
+                                fullWidth
+                                options={nodes || []}
+                                getOptionLabel={(option) => option.name}
+                                value={nodes.filter(n => formData.node_ids.includes(n.id))}
+                                onChange={(_, newValue) => {
+                                    setFormData({ ...formData, node_ids: newValue.map(n => n.id) });
+                                }}
+                                renderInput={(params) => (
+                                    <TextField
+                                        {...params}
+                                        label="Deploy to Nodes"
+                                        placeholder="Select gateway nodes..."
+                                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 3 } }}
+                                    />
+                                )}
+                                renderTags={(value, getTagProps) =>
+                                    value.map((option, index) => (
+                                        <Chip
+                                            label={option.name}
+                                            {...getTagProps({ index })}
+                                            size="small"
+                                            sx={{ borderRadius: 1.5 }}
+                                        />
+                                    ))
+                                }
+                            />
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                                Leave empty to not deploy this policy to any node yet.
+                            </Typography>
+                        </Grid>
+
+                        <Grid size={12}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 2, color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <ArrowIcon sx={{ fontSize: 16 }} /> DESTINATION SETTINGS
+                            </Typography>
+                            <Grid container spacing={2}>
+                                <Grid size={12}>
+                                    <TextField
+                                        select
+                                        fullWidth
+                                        label="Destination Type"
+                                        value={formData.destination_type}
+                                        onChange={(e) => setFormData({ ...formData, destination_type: e.target.value as any })}
+                                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 3 } }}
+                                    >
+                                        <MenuItem value="cidr">Network CIDR</MenuItem>
+                                        <MenuItem value="app">Application</MenuItem>
+                                        <MenuItem value="sni">SNI (Server Name Indication)</MenuItem>
+                                    </TextField>
+                                </Grid>
+
+                                {formData.destination_type === 'cidr' && (
+                                    <Grid size={12}>
+                                        <TextField
+                                            fullWidth
+                                            label="Network CIDR"
+                                            value={formData.destination_cidr}
+                                            onChange={(e) => setFormData({ ...formData, destination_cidr: e.target.value })}
+                                            placeholder="e.g. 10.0.0.0/24"
+                                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 3 } }}
+                                        />
+                                    </Grid>
+                                )}
+
+                                {formData.destination_type === 'app' && (
+                                    <Grid size={12}>
+                                        <Autocomplete
+                                            fullWidth
+                                            options={applications || []}
+                                            getOptionLabel={(option) => option?.name || ''}
+                                            value={applications?.find(app => app.id === formData.destination_app_id) || null}
+                                            onChange={(_, newValue) => {
+                                                setFormData({ ...formData, destination_app_id: newValue?.id || '' });
+                                            }}
+                                            renderInput={(params) => (
+                                                <TextField
+                                                    {...params}
+                                                    label="Select Application"
+                                                    placeholder="Search applications..."
+                                                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: 3 } }}
+                                                />
+                                            )}
+                                            renderOption={(props, option) => (
+                                                <li {...props} key={option.id}>
+                                                    <Box>
+                                                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                                            {option.name}
+                                                        </Typography>
+                                                        {option.description && (
+                                                            <Typography variant="caption" color="text.secondary">
+                                                                {option.description}
+                                                            </Typography>
+                                                        )}
+                                                    </Box>
+                                                </li>
+                                            )}
+                                            noOptionsText="No applications found. Create one first."
+                                            isOptionEqualToValue={(option, value) => option.id === value.id}
+                                        />
+                                        <Typography variant="caption" color="text.secondary" sx={{ ml: 1, mt: 0.5, display: 'block' }}>
+                                            Applications are pre-defined with multiple CIDRs. Manage applications in the Applications section.
+                                        </Typography>
+                                    </Grid>
+                                )}
+
+                                {formData.destination_type === 'sni' && (
+                                    <Grid size={12}>
+                                        <TextField
+                                            fullWidth
+                                            label="SNI (Server Name Indication)"
+                                            value={formData.destination_sni}
+                                            onChange={(e) => setFormData({ ...formData, destination_sni: e.target.value })}
+                                            placeholder="e.g. *.internal.com"
+                                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 3 } }}
+                                        />
+                                    </Grid>
+                                )}
+                            </Grid>
                         </Grid>
 
                         <Grid size={12}>
@@ -905,7 +1305,24 @@ const PoliciesView: React.FC<PoliciesViewProps> = ({ policies, onRefresh }) => {
                     </Button>
                 </DialogActions>
             </Dialog>
-        </Box>
+
+            <Dialog
+                open={confirmDialog.open}
+                onClose={() => setConfirmDialog({ ...confirmDialog, open: false })}
+                fullWidth
+                maxWidth="xs"
+                PaperProps={{ sx: { borderRadius: 3, p: 1 } }}
+            >
+                <DialogTitle sx={{ fontWeight: 800 }}>{confirmDialog.title}</DialogTitle>
+                <DialogContent>
+                    <Typography>{confirmDialog.message}</Typography>
+                </DialogContent>
+                <DialogActions sx={{ p: 2 }}>
+                    <Button onClick={() => setConfirmDialog({ ...confirmDialog, open: false })} color="inherit" sx={{ fontWeight: 700 }}>Cancel</Button>
+                    <Button onClick={confirmDialog.onConfirm} variant="contained" color="primary" sx={{ fontWeight: 700, px: 3, borderRadius: 2 }}>Confirm</Button>
+                </DialogActions>
+            </Dialog>
+        </Box >
     );
 };
 

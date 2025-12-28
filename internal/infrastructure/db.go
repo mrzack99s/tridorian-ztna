@@ -72,8 +72,11 @@ func SetupDatabase() *gorm.DB {
 			&models.PolicyCondition{},
 			&models.AccessPolicy{},
 			&models.SignInPolicy{},
+			&models.Application{},
+			&models.ApplicationCIDR{},
 			&models.CustomDomain{},
 			&models.BackofficeUser{},
+			&models.AccessPolicyNode{},
 		}
 
 		// db.Migrator().DropTable(all_model...)
@@ -104,15 +107,6 @@ func SetupDatabase() *gorm.DB {
 		// }
 		// db.Create(nodeSku)
 
-		// node := &models.Node{
-		// 	Name:          "Test Node",
-		// 	Hostname:      "test-node.local",
-		// 	AgentVersion:  "1.0.0",
-		// 	ConfigPending: true,
-		// 	NodeSkuID:     nodeSku.ID,
-		// }
-
-		// db.Create(node)
 	}
 
 	return db

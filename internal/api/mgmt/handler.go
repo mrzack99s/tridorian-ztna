@@ -15,22 +15,22 @@ import (
 )
 
 type Handler struct {
-	adminService    *services.AdminService
-	tenantService   *services.TenantService
-	policyService   *services.PolicyService
-	nodeService     *services.NodeService
-	identityService *services.IdentityService
-	jwtSecret       string
+	adminService       *services.AdminService
+	tenantService      *services.TenantService
+	policyService      *services.PolicyService
+	nodeService        *services.NodeService
+	identityService    *services.IdentityService
+	applicationService *services.ApplicationService
 }
 
-func NewHandler(adminService *services.AdminService, tenantService *services.TenantService, policyService *services.PolicyService, nodeService *services.NodeService, identityService *services.IdentityService, jwtSecret string) *Handler {
+func NewHandler(adminService *services.AdminService, tenantService *services.TenantService, policyService *services.PolicyService, nodeService *services.NodeService, identityService *services.IdentityService, applicationService *services.ApplicationService) *Handler {
 	return &Handler{
-		adminService:    adminService,
-		tenantService:   tenantService,
-		policyService:   policyService,
-		nodeService:     nodeService,
-		identityService: identityService,
-		jwtSecret:       jwtSecret,
+		adminService:       adminService,
+		tenantService:      tenantService,
+		policyService:      policyService,
+		nodeService:        nodeService,
+		identityService:    identityService,
+		applicationService: applicationService,
 	}
 }
 
@@ -57,22 +57,36 @@ func (h *Handler) ListAdmins(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
 	var input struct {
-		Name     string `json:"name"`
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Name     string           `json:"name"`
+		Email    string           `json:"email"`
+		Password string           `json:"password"`
+		Role     models.AdminRole `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		common.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	admin, err := h.adminService.CreateAdmin(tenantID, input.Name, input.Email, input.Password)
+	admin, password, err := h.adminService.CreateAdmin(tenantID, input.Name, input.Email, input.Password, input.Role)
 	if err != nil {
 		common.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	common.Success(w, http.StatusCreated, admin)
+	common.Success(w, http.StatusCreated, map[string]interface{}{
+		"admin":    admin,
+		"password": password,
+	})
+}
+
+func (h *Handler) ListDomains(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.GetTenantID(r.Context())
+	domains, err := h.tenantService.ListDomains(tenantID)
+	if err != nil {
+		common.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	common.Success(w, http.StatusOK, domains)
 }
 
 func (h *Handler) DeleteAdmin(w http.ResponseWriter, r *http.Request) {
@@ -109,8 +123,9 @@ func (h *Handler) DeleteAdmin(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
 	var input struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID   string           `json:"id"`
+		Name string           `json:"name"`
+		Role models.AdminRole `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		common.Error(w, http.StatusBadRequest, "invalid request body")
@@ -123,7 +138,7 @@ func (h *Handler) UpdateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.adminService.UpdateAdmin(tenantID, adminID, input.Name); err != nil {
+	if err := h.adminService.UpdateAdmin(tenantID, adminID, input.Name, input.Role); err != nil {
 		common.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -323,10 +338,50 @@ func (h *Handler) ListAccessPolicies(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CreateAccessPolicy(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
-	var policy models.AccessPolicy
-	if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
-		common.Error(w, http.StatusBadRequest, "invalid request body")
+	var input struct {
+		models.AccessPolicy
+		RawRootNodeID       *string  `json:"root_node_id"`
+		RawDestinationAppID *string  `json:"destination_app_id"`
+		NodeIDs             []string `json:"node_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		common.Error(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
+	}
+
+	policy := input.AccessPolicy
+
+	// Handle RootNodeID
+	if input.RawRootNodeID != nil && *input.RawRootNodeID != "" {
+		parsedID, err := uuid.Parse(*input.RawRootNodeID)
+		if err != nil {
+			common.Error(w, http.StatusBadRequest, "invalid root_node_id format")
+			return
+		}
+		policy.RootNodeID = &parsedID
+	}
+
+	// Handle DestinationAppID
+	if input.RawDestinationAppID != nil && *input.RawDestinationAppID != "" {
+		parsedID, err := uuid.Parse(*input.RawDestinationAppID)
+		if err != nil {
+			common.Error(w, http.StatusBadRequest, "invalid destination_app_id format")
+			return
+		}
+		policy.DestinationAppID = &parsedID
+	}
+
+	// Handle NodeIDs allocation
+	if len(input.NodeIDs) > 0 {
+		var nodes []models.Node
+		for _, idStr := range input.NodeIDs {
+			uid, err := uuid.Parse(idStr)
+			if err == nil {
+				// We only need the ID for the association
+				nodes = append(nodes, models.Node{BaseModel: models.BaseModel{ID: uid}})
+			}
+		}
+		policy.Nodes = nodes
 	}
 
 	created, err := h.policyService.CreateAccessPolicy(tenantID, &policy)
@@ -339,10 +394,49 @@ func (h *Handler) CreateAccessPolicy(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) UpdateAccessPolicy(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
-	var policy models.AccessPolicy
-	if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
-		common.Error(w, http.StatusBadRequest, "invalid request body")
+	var input struct {
+		models.AccessPolicy
+		RawRootNodeID       *string  `json:"root_node_id"`
+		RawDestinationAppID *string  `json:"destination_app_id"`
+		NodeIDs             []string `json:"node_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		common.Error(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
+	}
+
+	policy := input.AccessPolicy
+
+	// Handle RootNodeID
+	if input.RawRootNodeID != nil && *input.RawRootNodeID != "" {
+		parsedID, err := uuid.Parse(*input.RawRootNodeID)
+		if err != nil {
+			common.Error(w, http.StatusBadRequest, "invalid root_node_id format")
+			return
+		}
+		policy.RootNodeID = &parsedID
+	}
+
+	// Handle DestinationAppID
+	if input.RawDestinationAppID != nil && *input.RawDestinationAppID != "" {
+		parsedID, err := uuid.Parse(*input.RawDestinationAppID)
+		if err != nil {
+			common.Error(w, http.StatusBadRequest, "invalid destination_app_id format")
+			return
+		}
+		policy.DestinationAppID = &parsedID
+	}
+
+	// Handle NodeIDs allocation
+	if len(input.NodeIDs) > 0 {
+		var nodes []models.Node
+		for _, idStr := range input.NodeIDs {
+			uid, err := uuid.Parse(idStr)
+			if err == nil {
+				nodes = append(nodes, models.Node{BaseModel: models.BaseModel{ID: uid}})
+			}
+		}
+		policy.Nodes = nodes
 	}
 
 	updated, err := h.policyService.UpdateAccessPolicy(tenantID, &policy)
@@ -355,15 +449,13 @@ func (h *Handler) UpdateAccessPolicy(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) DeleteAccessPolicy(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
-	var input struct {
-		ID string `json:"id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		common.Error(w, http.StatusBadRequest, "invalid request body")
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		common.Error(w, http.StatusBadRequest, "id is required")
 		return
 	}
 
-	policyID, err := uuid.Parse(input.ID)
+	policyID, err := uuid.Parse(id)
 	if err != nil {
 		common.Error(w, http.StatusBadRequest, "invalid policy id")
 		return
@@ -420,15 +512,12 @@ func (h *Handler) UpdateSignInPolicy(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) DeleteSignInPolicy(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
-	var input struct {
-		ID string `json:"id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		common.Error(w, http.StatusBadRequest, "invalid request body")
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		common.Error(w, http.StatusBadRequest, "id is required")
 		return
 	}
-
-	policyID, err := uuid.Parse(input.ID)
+	policyID, err := uuid.Parse(id)
 	if err != nil {
 		common.Error(w, http.StatusBadRequest, "invalid policy id")
 		return
@@ -451,17 +540,61 @@ func (h *Handler) ListNodes(w http.ResponseWriter, r *http.Request) {
 	common.Success(w, http.StatusOK, nodes)
 }
 
+func (h *Handler) ListNodeSkus(w http.ResponseWriter, r *http.Request) {
+	skus, err := h.nodeService.ListNodeSkus()
+	if err != nil {
+		common.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	common.Success(w, http.StatusOK, skus)
+}
+
+func (h *Handler) ListNodeSessions(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.GetTenantID(r.Context())
+	nodeIDStr := r.URL.Query().Get("node_id")
+	if nodeIDStr == "" {
+		common.Error(w, http.StatusBadRequest, "node_id is required")
+		return
+	}
+
+	nodeID, err := uuid.Parse(nodeIDStr)
+	if err != nil {
+		common.Error(w, http.StatusBadRequest, "invalid node_id")
+		return
+	}
+
+	sessions, err := h.nodeService.ListSessions(tenantID, nodeID)
+	if err != nil {
+		common.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	common.Success(w, http.StatusOK, sessions)
+}
+
 func (h *Handler) CreateNode(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
 	var input struct {
-		Name string `json:"name"`
+		Name       string `json:"name"`
+		SkuID      string `json:"sku_id"`
+		ClientCIDR string `json:"client_cidr"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		common.Error(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	node, err := h.nodeService.CreateNode(tenantID, input.Name)
+	if input.SkuID == "" {
+		common.Error(w, http.StatusBadRequest, "sku_id is required")
+		return
+	}
+
+	skuUUID, err := uuid.Parse(input.SkuID)
+	if err != nil {
+		common.Error(w, http.StatusBadRequest, "invalid sku_id")
+		return
+	}
+
+	node, err := h.nodeService.CreateNode(tenantID, input.Name, skuUUID, input.ClientCIDR)
 	if err != nil {
 		common.Error(w, http.StatusInternalServerError, err.Error())
 		return
@@ -526,23 +659,25 @@ func (h *Handler) SearchIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Search Users
+	// Search Users - handle errors gracefully
 	users, err := h.identityService.SearchGoogleUsers(r.Context(), []byte(tenant.GoogleServiceAccountKey), tenant.GoogleAdminEmail, query)
 	if err != nil {
-		log.Printf("failed to search users: %v", err)
+		log.Printf("failed to search users for tenant %s: %v", tenantID, err)
+		users = []models.ExternalIdentity{} // Return empty slice instead of nil
 	}
 
-	// Search Groups
+	// Search Groups - handle errors gracefully
 	groups, err := h.identityService.SearchGoogleGroups(r.Context(), []byte(tenant.GoogleServiceAccountKey), tenant.GoogleAdminEmail, query)
 	if err != nil {
-		log.Printf("failed to search groups: %v", err)
+		log.Printf("failed to search groups for tenant %s: %v", tenantID, err)
+		groups = []string{} // Return empty slice instead of nil
 	}
 
-	var results []struct {
+	var results = []struct {
 		Type  string `json:"type"`
 		Value string `json:"value"`
 		Label string `json:"label"`
-	}
+	}{}
 
 	for _, u := range users {
 		results = append(results, struct {
@@ -568,5 +703,117 @@ func (h *Handler) SearchIdentity(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Always return success with results (even if empty)
+	// This prevents white screen errors on the frontend
+
 	common.Success(w, http.StatusOK, results)
+}
+
+// Application Management
+
+func (h *Handler) ListApplications(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.GetTenantID(r.Context())
+	apps, err := h.applicationService.ListApplications(tenantID)
+	if err != nil {
+		common.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Ensure we always return an array, never null
+	if apps == nil {
+		apps = []models.Application{}
+	}
+	common.Success(w, http.StatusOK, apps)
+}
+
+func (h *Handler) GetApplication(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.GetTenantID(r.Context())
+	appIDStr := r.URL.Query().Get("id")
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil {
+		common.Error(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+
+	app, cidrs, err := h.applicationService.GetApplicationWithCIDRs(tenantID, appID)
+	if err != nil {
+		common.Error(w, http.StatusNotFound, "application not found")
+		return
+	}
+
+	common.Success(w, http.StatusOK, map[string]interface{}{
+		"application": app,
+		"cidrs":       cidrs,
+	})
+}
+
+func (h *Handler) CreateApplication(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.GetTenantID(r.Context())
+	var input struct {
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		CIDRs       []string `json:"cidrs"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		common.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	app, err := h.applicationService.CreateApplication(tenantID, input.Name, input.Description, input.CIDRs)
+	if err != nil {
+		common.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	common.Success(w, http.StatusCreated, app)
+}
+
+func (h *Handler) UpdateApplication(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.GetTenantID(r.Context())
+	var input struct {
+		ID          string   `json:"id"`
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		CIDRs       []string `json:"cidrs"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		common.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	appID, err := uuid.Parse(input.ID)
+	if err != nil {
+		common.Error(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+
+	if err := h.applicationService.UpdateApplication(tenantID, appID, input.Name, input.Description, input.CIDRs); err != nil {
+		common.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	common.Success(w, http.StatusOK, map[string]string{"message": "application updated"})
+}
+
+func (h *Handler) DeleteApplication(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.GetTenantID(r.Context())
+	var input struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		common.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	appID, err := uuid.Parse(input.ID)
+	if err != nil {
+		common.Error(w, http.StatusBadRequest, "invalid application id")
+		return
+	}
+
+	if err := h.applicationService.DeleteApplication(tenantID, appID); err != nil {
+		common.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	common.Success(w, http.StatusOK, map[string]string{"message": "application deleted"})
 }

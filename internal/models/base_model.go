@@ -29,6 +29,6 @@ type BasePolicy struct {
 	BaseModel
 
 	Name     string `json:"name,omitempty"`
-	Priority int    `json:"priority,omitempty"`
-	Enabled  bool   `json:"enabled,omitempty"`
+	Priority int    `json:"priority"`
+	Enabled  bool   `json:"enabled"`
 }

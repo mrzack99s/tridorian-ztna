@@ -77,3 +77,6 @@ pnpm-debug.log*
 
 # Docker
 .docker
+
+# Binary
+apps/ztna-client/bin/*

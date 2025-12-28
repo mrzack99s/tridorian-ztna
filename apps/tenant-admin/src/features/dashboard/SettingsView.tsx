@@ -2,22 +2,24 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
     Box, Typography, Card, CardContent, Button, Divider, TextField, Grid,
     Alert, Fade, IconButton, Paper, CircularProgress, Dialog, DialogTitle,
-    DialogContent, DialogActions, Chip
+    DialogContent, DialogActions, Chip, useMediaQuery, useTheme
 } from '@mui/material';
 import {
     Logout as LogoutIcon, Settings as SettingsIcon, Google as GoogleIcon,
     Save as SaveIcon, Edit as EditIcon, Language as LanguageIcon,
     CheckCircle as CheckCircleIcon, ErrorOutline as ErrorOutlineIcon,
-    Refresh as RefreshIcon, Upload as UploadIcon
+    Refresh as RefreshIcon, Upload as UploadIcon,
+    DeleteForever as DeleteIcon
 } from '@mui/icons-material';
-import { Tenant } from '../../types';
+import { Tenant, User } from '../../types';
 
 interface SettingsViewProps {
     tenant: Tenant | null;
     onRefresh: () => void;
+    user: User | null;
 }
 
-const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh }) => {
+const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh, user }) => {
     // Edit Modes
     const [editIDP, setEditIDP] = useState(false);
     const [showDomainDialog, setShowDomainDialog] = useState(false);
@@ -42,6 +44,10 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh }) => {
     const [verificationStep, setVerificationStep] = useState<'idle' | 'pending'>('idle');
     const [verificationToken, setVerificationToken] = useState('');
     const [customDomainID, setCustomDomainID] = useState('');
+    const [showTerminateDialog, setShowTerminateDialog] = useState(false);
+
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
@@ -57,9 +63,28 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh }) => {
         }
     }, [tenant]);
 
-    const handleLogout = async () => {
-        await fetch('/auth/mgmt/logout', { method: 'POST' });
-        window.location.reload();
+    const handleTerminateTenant = async () => {
+        if (!tenant) return;
+        setLoading(true);
+        try {
+            const res = await fetch('/api/v1/tenants', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: tenant.id })
+            });
+            if (res.ok) {
+                // If tenant is deleted, user should be logged out
+                await fetch('/auth/mgmt/logout', { method: 'POST' });
+                window.location.reload();
+            } else {
+                const data = await res.json();
+                alert('Error: ' + data.message);
+            }
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setLoading(false);
+        }
     };
 
     const handleUploadKey = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -177,9 +202,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh }) => {
     };
 
     return (
-        <Box sx={{ maxWidth: 1200, mx: 'auto', py: 2 }}>
+        <Box>
             <Box sx={{ mb: 6 }}>
-                <Typography variant="h4" sx={{ fontWeight: 800, letterSpacing: '-0.02em', mb: 1 }}>Settings</Typography>
+                <Typography variant={isMobile ? "h5" : "h4"} sx={{ fontWeight: 800, letterSpacing: '-0.02em', mb: 1 }}>Settings</Typography>
                 <Typography color="text.secondary">Manage your organization's core configuration and security policies.</Typography>
             </Box>
 
@@ -195,7 +220,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh }) => {
                 </Grid>
                 <Grid size={{ xs: 12, md: 8 }}>
                     <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}>
-                        <Box sx={{ p: 3, borderBottom: '1px solid #f0f0f0' }}>
+                        <Box sx={{ p: isMobile ? 2 : 3, borderBottom: '1px solid #f0f0f0' }}>
                             <Grid container spacing={2}>
                                 <Grid size={{ xs: 12, sm: 6 }}>
                                     <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Organization Name</Typography>
@@ -207,12 +232,12 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh }) => {
                                 </Grid>
                             </Grid>
                         </Box>
-                        <Box sx={{ p: 3, bgcolor: '#fafafa' }}>
-                            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                        <Box sx={{ p: isMobile ? 2 : 3, bgcolor: '#fafafa' }}>
+                            <Box sx={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'flex-start' : 'center', justifyContent: 'space-between', gap: isMobile ? 2 : 0 }}>
                                 <Box>
                                     <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Primary Domain</Typography>
                                     <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5, gap: 1 }}>
-                                        <Typography variant="h6" sx={{ fontWeight: 700, letterSpacing: '-0.01em' }}>{tenant?.primary_domain}</Typography>
+                                        <Typography variant="h6" sx={{ fontWeight: 700, letterSpacing: '-0.01em', wordBreak: 'break-all' }}>{tenant?.primary_domain}</Typography>
                                         <Chip
                                             icon={<CheckCircleIcon style={{ fontSize: 16 }} />}
                                             label="Verified"
@@ -223,15 +248,17 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh }) => {
                                         />
                                     </Box>
                                 </Box>
-                                <Button
-                                    variant="outlined"
-                                    size="small"
-                                    startIcon={<RefreshIcon />}
-                                    onClick={() => setShowDomainDialog(true)}
-                                    sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600 }}
-                                >
-                                    Update Domain
-                                </Button>
+                                {user?.role === 'super_admin' && (
+                                    <Button
+                                        variant="outlined"
+                                        size="small"
+                                        startIcon={<RefreshIcon />}
+                                        onClick={() => setShowDomainDialog(true)}
+                                        sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600, width: isMobile ? '100%' : 'auto' }}
+                                    >
+                                        Update Domain
+                                    </Button>
+                                )}
                             </Box>
                         </Box>
                     </Paper>
@@ -239,183 +266,196 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh }) => {
             </Grid>
 
             {/* Section: Identity Provider */}
-            <Grid container spacing={4} sx={{ mb: 8 }}>
-                <Grid size={{ xs: 12, md: 4 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>Identity Provider</Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Configure Google Workspace to enable Single Sign-On (SSO) and automated user directory synchronization.
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
-                        <GoogleIcon sx={{ color: '#ea4335', fontSize: 20 }} />
-                        <Typography variant="caption" sx={{ fontWeight: 600 }}>Google Workspace Integrated</Typography>
-                    </Box>
-                </Grid>
-                <Grid size={{ xs: 12, md: 8 }}>
-                    <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}>
-                        <Box sx={{ p: 3, borderBottom: editIDP ? '1px solid #f0f0f0' : 'none' }}>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: editIDP ? 3 : 0 }}>
-                                <Box>
-                                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Google OIDC Configuration</Typography>
-                                    <Typography variant="body2" color="text.secondary">Manage OAuth 2.0 and Service Account credentials.</Typography>
+            {user?.role === 'super_admin' && (
+                <Grid container spacing={4} sx={{ mb: 8 }}>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                        <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>Identity Provider</Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                            Configure Google Workspace to enable Single Sign-On (SSO) and automated user directory synchronization.
+                        </Typography>
+                        <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
+                            <GoogleIcon sx={{ color: '#ea4335', fontSize: 20 }} />
+                            <Typography variant="caption" sx={{ fontWeight: 600 }}>Google Workspace Integrated</Typography>
+                        </Box>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 8 }}>
+                        <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}>
+                            <Box sx={{ p: isMobile ? 2 : 3, borderBottom: editIDP ? '1px solid #f0f0f0' : 'none' }}>
+                                <Box sx={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', mb: editIDP ? 3 : 0, gap: isMobile ? 2 : 0 }}>
+                                    <Box>
+                                        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Google OIDC Configuration</Typography>
+                                        <Typography variant="body2" color="text.secondary">Manage OAuth 2.0 and Service Account credentials.</Typography>
+                                    </Box>
+                                    {!editIDP ? (
+                                        <Button
+                                            variant="contained"
+                                            startIcon={<EditIcon />}
+                                            size="small"
+                                            onClick={() => setEditIDP(true)}
+                                            sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600, boxShadow: 'none' }}
+                                        >
+                                            Edit Config
+                                        </Button>
+                                    ) : (
+                                        <Button
+                                            variant="text"
+                                            color="inherit"
+                                            size="small"
+                                            onClick={() => setEditIDP(false)}
+                                            sx={{ textTransform: 'none' }}
+                                        >
+                                            Cancel
+                                        </Button>
+                                    )}
                                 </Box>
+
+                                {success && !editIDP && (
+                                    <Fade in>
+                                        <Alert severity="success" sx={{ mt: 2, borderRadius: 2 }}>Configuration updated successfully.</Alert>
+                                    </Fade>
+                                )}
+
                                 {!editIDP ? (
-                                    <Button
-                                        variant="contained"
-                                        startIcon={<EditIcon />}
-                                        size="small"
-                                        onClick={() => setEditIDP(true)}
-                                        sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600, boxShadow: 'none' }}
-                                    >
-                                        Edit Config
-                                    </Button>
+                                    <Box sx={{ mt: 3, bgcolor: '#f8f9fa', p: 2, borderRadius: 2 }}>
+                                        <Grid container spacing={2}>
+                                            <Grid size={{ xs: 12, sm: 8 }}>
+                                                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700 }}>Client ID</Typography>
+                                                <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'text.primary', mt: 0.5, wordBreak: 'break-all' }}>
+                                                    {tenant?.google_client_id || 'Not configured'}
+                                                </Typography>
+                                            </Grid>
+                                            <Grid size={{ xs: 12, sm: 4 }}>
+                                                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700 }}>Admin Email</Typography>
+                                                <Typography variant="body2" sx={{ mt: 0.5 }}>{tenant?.google_admin_email || 'Not configured'}</Typography>
+                                            </Grid>
+                                        </Grid>
+                                    </Box>
                                 ) : (
-                                    <Button
-                                        variant="text"
-                                        color="inherit"
-                                        size="small"
-                                        onClick={() => setEditIDP(false)}
-                                        sx={{ textTransform: 'none' }}
-                                    >
-                                        Cancel
-                                    </Button>
+                                    <Fade in>
+                                        <Box>
+                                            <Grid container spacing={3}>
+                                                <Grid size={12}>
+                                                    <TextField
+                                                        fullWidth
+                                                        label="Google Client ID"
+                                                        value={idpConfig.clientID}
+                                                        onChange={e => setIdpConfig({ ...idpConfig, clientID: e.target.value })}
+                                                        placeholder="000000000-xxxxx.apps.googleusercontent.com"
+                                                    />
+                                                </Grid>
+                                                <Grid size={12}>
+                                                    <TextField
+                                                        fullWidth
+                                                        label="Google Client Secret"
+                                                        type="password"
+                                                        value={idpConfig.clientSecret}
+                                                        onChange={e => setIdpConfig({ ...idpConfig, clientSecret: e.target.value })}
+                                                        placeholder="••••••••"
+                                                        helperText="Leave blank to keep existing"
+                                                    />
+                                                </Grid>
+                                                <Grid size={12}>
+                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                                                        <Typography variant="body2" sx={{ fontWeight: 600 }}>Service Account Key (JSON)</Typography>
+                                                        <Button
+                                                            size="small"
+                                                            startIcon={<UploadIcon />}
+                                                            onClick={() => fileInputRef.current?.click()}
+                                                            sx={{ textTransform: 'none' }}
+                                                        >
+                                                            Upload JSON
+                                                        </Button>
+                                                    </Box>
+                                                    <input
+                                                        type="file"
+                                                        ref={fileInputRef}
+                                                        style={{ display: 'none' }}
+                                                        accept=".json"
+                                                        onChange={handleUploadKey}
+                                                    />
+                                                    <TextField
+                                                        fullWidth
+                                                        multiline
+                                                        rows={4}
+                                                        value={idpConfig.saKey}
+                                                        onChange={e => setIdpConfig({ ...idpConfig, saKey: e.target.value })}
+                                                        placeholder="{ ... }"
+                                                        sx={{ '& .MuiInputBase-input': { fontFamily: 'monospace', fontSize: 13 } }}
+                                                        helperText="Required for directory sync"
+                                                    />
+                                                </Grid>
+                                                <Grid size={12}>
+                                                    <TextField
+                                                        fullWidth
+                                                        label="Google Admin User Email"
+                                                        value={idpConfig.adminEmail}
+                                                        onChange={e => setIdpConfig({ ...idpConfig, adminEmail: e.target.value })}
+                                                        placeholder="admin@yourcompany.com"
+                                                    />
+                                                </Grid>
+                                            </Grid>
+                                            <Box sx={{ mt: 4, display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
+                                                <Button
+                                                    variant="contained"
+                                                    startIcon={loading ? <CircularProgress size={18} color="inherit" /> : <SaveIcon />}
+                                                    disabled={loading}
+                                                    onClick={handleUpdateIdentity}
+                                                    sx={{ borderRadius: 2, px: 4, py: 1 }}
+                                                >
+                                                    Save Identity Config
+                                                </Button>
+                                            </Box>
+                                        </Box>
+                                    </Fade>
                                 )}
                             </Box>
-
-                            {success && !editIDP && (
-                                <Fade in>
-                                    <Alert severity="success" sx={{ mt: 2, borderRadius: 2 }}>Configuration updated successfully.</Alert>
-                                </Fade>
-                            )}
-
-                            {!editIDP ? (
-                                <Box sx={{ mt: 3, bgcolor: '#f8f9fa', p: 2, borderRadius: 2 }}>
-                                    <Grid container spacing={2}>
-                                        <Grid size={{ xs: 12, sm: 8 }}>
-                                            <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700 }}>Client ID</Typography>
-                                            <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'text.primary', mt: 0.5, wordBreak: 'break-all' }}>
-                                                {tenant?.google_client_id || 'Not configured'}
-                                            </Typography>
-                                        </Grid>
-                                        <Grid size={{ xs: 12, sm: 4 }}>
-                                            <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700 }}>Admin Email</Typography>
-                                            <Typography variant="body2" sx={{ mt: 0.5 }}>{tenant?.google_admin_email || 'Not configured'}</Typography>
-                                        </Grid>
-                                    </Grid>
-                                </Box>
-                            ) : (
-                                <Fade in>
-                                    <Box>
-                                        <Grid container spacing={3}>
-                                            <Grid size={12}>
-                                                <TextField
-                                                    fullWidth
-                                                    label="Google Client ID"
-                                                    value={idpConfig.clientID}
-                                                    onChange={e => setIdpConfig({ ...idpConfig, clientID: e.target.value })}
-                                                    placeholder="000000000-xxxxx.apps.googleusercontent.com"
-                                                />
-                                            </Grid>
-                                            <Grid size={12}>
-                                                <TextField
-                                                    fullWidth
-                                                    label="Google Client Secret"
-                                                    type="password"
-                                                    value={idpConfig.clientSecret}
-                                                    onChange={e => setIdpConfig({ ...idpConfig, clientSecret: e.target.value })}
-                                                    placeholder="••••••••"
-                                                    helperText="Leave blank to keep existing"
-                                                />
-                                            </Grid>
-                                            <Grid size={12}>
-                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>Service Account Key (JSON)</Typography>
-                                                    <Button
-                                                        size="small"
-                                                        startIcon={<UploadIcon />}
-                                                        onClick={() => fileInputRef.current?.click()}
-                                                        sx={{ textTransform: 'none' }}
-                                                    >
-                                                        Upload JSON
-                                                    </Button>
-                                                </Box>
-                                                <input
-                                                    type="file"
-                                                    ref={fileInputRef}
-                                                    style={{ display: 'none' }}
-                                                    accept=".json"
-                                                    onChange={handleUploadKey}
-                                                />
-                                                <TextField
-                                                    fullWidth
-                                                    multiline
-                                                    rows={4}
-                                                    value={idpConfig.saKey}
-                                                    onChange={e => setIdpConfig({ ...idpConfig, saKey: e.target.value })}
-                                                    placeholder="{ ... }"
-                                                    sx={{ '& .MuiInputBase-input': { fontFamily: 'monospace', fontSize: 13 } }}
-                                                    helperText="Required for directory sync"
-                                                />
-                                            </Grid>
-                                            <Grid size={12}>
-                                                <TextField
-                                                    fullWidth
-                                                    label="Google Admin User Email"
-                                                    value={idpConfig.adminEmail}
-                                                    onChange={e => setIdpConfig({ ...idpConfig, adminEmail: e.target.value })}
-                                                    placeholder="admin@yourcompany.com"
-                                                />
-                                            </Grid>
-                                        </Grid>
-                                        <Box sx={{ mt: 4, display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
-                                            <Button
-                                                variant="contained"
-                                                startIcon={loading ? <CircularProgress size={18} color="inherit" /> : <SaveIcon />}
-                                                disabled={loading}
-                                                onClick={handleUpdateIdentity}
-                                                sx={{ borderRadius: 2, px: 4, py: 1 }}
-                                            >
-                                                Save Identity Config
-                                            </Button>
-                                        </Box>
-                                    </Box>
-                                </Fade>
-                            )}
-                        </Box>
-                    </Paper>
-                </Grid>
-            </Grid>
+                        </Paper>
+                    </Grid>
+                </Grid >
+            )}
 
             {/* Section: Danger Zone */}
-            <Grid container spacing={4} sx={{ mb: 8 }}>
-                <Grid size={{ xs: 12, md: 4 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 700, color: 'error.main', mb: 1 }}>Danger Zone</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                        Critical actions that impact your console session and workspace accessibility.
-                    </Typography>
-                </Grid>
-                <Grid size={{ xs: 12, md: 8 }}>
-                    <Paper variant="outlined" sx={{ borderRadius: 3, borderColor: 'error.light', bgcolor: 'rgba(211, 47, 47, 0.02)' }}>
-                        <Box sx={{ p: 3, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Box>
-                                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Logout from Management Console</Typography>
-                                <Typography variant="body2" color="text.secondary">This will terminate your current administrative session.</Typography>
+            {user?.role === 'super_admin' && (
+                <Grid container spacing={4} sx={{ mb: 8 }}>
+                    <Grid size={{ xs: 12, md: 4 }}>
+                        <Typography variant="h6" sx={{ fontWeight: 700, color: 'error.main', mb: 1 }}>Danger Zone</Typography>
+                        <Typography variant="body2" color="text.secondary">
+                            Critical actions that irreversibly impact your organization's presence.
+                        </Typography>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 8 }}>
+                        <Paper variant="outlined" sx={{ borderRadius: 3, borderColor: 'error.light', bgcolor: 'rgba(211, 47, 47, 0.02)' }}>
+                            <Box sx={{ p: isMobile ? 2 : 3, display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'flex-start' : 'center', justifyContent: 'space-between', gap: isMobile ? 2 : 0 }}>
+                                <Box>
+                                    <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'error.main' }}>Terminate Tenant</Typography>
+                                    <Typography variant="body2" color="text.secondary">Irreversibly delete this organization and all associated data.</Typography>
+                                </Box>
+                                <Button
+                                    variant="contained"
+                                    color="error"
+                                    startIcon={<DeleteIcon />}
+                                    onClick={() => setShowTerminateDialog(true)}
+                                    sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600, width: isMobile ? '100%' : 'auto', boxShadow: 'none' }}
+                                >
+                                    Terminate Organization
+                                </Button>
                             </Box>
-                            <Button
-                                variant="outlined"
-                                color="error"
-                                startIcon={<LogoutIcon />}
-                                onClick={handleLogout}
-                                sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600 }}
-                            >
-                                Sign Out
-                            </Button>
-                        </Box>
-                    </Paper>
-                </Grid>
-            </Grid>
+                        </Paper>
+                    </Grid>
+                </Grid >
+            )}
 
             {/* Domain Dialog */}
-            <Dialog open={showDomainDialog} onClose={() => setShowDomainDialog(false)} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3, p: 1 } }}>
+            < Dialog
+                open={showDomainDialog}
+                fullScreen={isMobile}
+                onClose={(_, reason) => {
+                    if (reason !== 'backdropClick') setShowDomainDialog(false);
+                }}
+                maxWidth="sm"
+                fullWidth
+                PaperProps={{ sx: { borderRadius: isMobile ? 0 : 3, p: 1 } }}
+            >
                 <DialogTitle sx={{ fontWeight: 800 }}>Update Primary Domain</DialogTitle>
                 <DialogContent>
                     {verificationStep === 'idle' ? (
@@ -506,8 +546,38 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh }) => {
                         </Button>
                     )}
                 </DialogActions>
+            </Dialog >
+
+            {/* Terminate Tenant Dialog */}
+            <Dialog
+                open={showTerminateDialog}
+                onClose={() => setShowTerminateDialog(false)}
+                maxWidth="xs"
+                fullWidth
+            >
+                <DialogTitle sx={{ fontWeight: 800, color: 'error.main' }}>Terminate Organization?</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" sx={{ mb: 2 }}>
+                        Are you sure you want to delete <strong>{tenant?.name}</strong>? This action is <strong>irreversible</strong> and will delete all users, nodes, and policies.
+                    </Typography>
+                    <Typography variant="body2" sx={{ p: 1.5, bgcolor: '#fce8e6', color: '#d93025', borderRadius: 2, fontWeight: 500 }}>
+                        All services will stop immediately.
+                    </Typography>
+                </DialogContent>
+                <DialogActions sx={{ p: 2, gap: 1 }}>
+                    <Button onClick={() => setShowTerminateDialog(false)} color="inherit">Cancel</Button>
+                    <Button
+                        variant="contained"
+                        color="error"
+                        onClick={handleTerminateTenant}
+                        disabled={loading}
+                        sx={{ boxShadow: 'none' }}
+                    >
+                        {loading ? <CircularProgress size={20} color="inherit" /> : 'Yes, Terminate'}
+                    </Button>
+                </DialogActions>
             </Dialog>
-        </Box>
+        </Box >
     );
 };
 

@@ -11,12 +11,16 @@ type Node struct {
 	BaseModel
 
 	// Identity
-	Name         string `gorm:"size:255;not null" json:"name,omitempty"`
-	Hostname     string `gorm:"size:255" json:"hostname,omitempty"`
-	AgentVersion string `gorm:"size:50" json:"agent_version,omitempty"`
+	Name           string `gorm:"size:255;not null" json:"name,omitempty"`
+	Hostname       string `gorm:"size:255" json:"hostname,omitempty"`
+	IPAddress      string `gorm:"size:50" json:"ip_address,omitempty"` // Public IP of the gateway
+	GatewayVersion string `gorm:"size:50" json:"gateway_version,omitempty"`
+	ClientCIDR     string `gorm:"size:50;column:client_cidr" json:"client_cidr,omitempty"`
+	DeviceHash     string `gorm:"size:255" json:"device_hash,omitempty"`
 
 	// Authentication & Security
-	AuthToken string `gorm:"uniqueIndex;not null" json:"auth_token,omitempty"`
+	AuthToken    *string `gorm:"uniqueIndex" json:"auth_token,omitempty"`
+	PublicKeyPEM string  `gorm:"type:text" json:"public_key_pem,omitempty"`
 
 	// License
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -28,9 +32,7 @@ type Node struct {
 	ConfigPending bool       `gorm:"default:false;not null" json:"config_pending,omitempty"`
 
 	AccessPolicies []AccessPolicy `gorm:"many2many:access_policy_nodes;" json:"access_policies,omitempty"`
-	SignInPolicies []SignInPolicy `gorm:"many2many:sign_in_policy_nodes;" json:"sign_in_policies,omitempty"`
 
-	// ผูกว่า Node นี้เกิดจาก License ไหน
 	NodeSkuID uuid.UUID `gorm:"index" json:"node_sku_id,omitempty"`
 	NodeSku   NodeSku   `json:"node_sku,omitempty"`
 }

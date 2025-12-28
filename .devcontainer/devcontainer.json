@@ -1,0 +1,23 @@
+{
+    "name": "Tridorian ZTNA (Go)",
+    "dockerComposeFile": [
+        "docker-compose.yml"
+    ],
+    "service": "app",
+    "workspaceFolder": "/workspace",
+    // Override DB config to use container service names instead of localhost
+    "remoteEnv": {
+        "DB_HOST": "postgres",
+        "CACHE_HOST": "valkey"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "golang.go",
+                "humao.rest-client",
+                "dbankier.vscode-quick-select"
+            ]
+        }
+    },
+    "remoteUser": "root"
+}

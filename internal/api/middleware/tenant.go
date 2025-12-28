@@ -42,6 +42,7 @@ func ResolveTenantByHost(tenantService *services.TenantService) func(http.Handle
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			host := r.Host
+
 			if strings.Contains(host, ":") {
 				host = strings.Split(host, ":")[0]
 			}
@@ -54,7 +55,8 @@ func ResolveTenantByHost(tenantService *services.TenantService) func(http.Handle
 				}
 
 				if err != nil {
-					common.Error(w, http.StatusUnauthorized, "unauthorized tenant domain")
+					// User is accessing via an unknown or deleted tenant domain
+					common.RenderErrorPage(w, http.StatusUnauthorized, "Unknown Tenant", "The domain you are accessing is not a valid Tridorian ZTNA tenant.", "Domain: "+host)
 					return
 				}
 			}

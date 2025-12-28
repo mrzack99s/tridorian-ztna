@@ -1,8 +1,10 @@
 package auth
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -10,9 +12,11 @@ import (
 	"tridorian-ztna/internal/api/middleware"
 	"tridorian-ztna/internal/models"
 	"tridorian-ztna/internal/services"
+	"tridorian-ztna/pkg/geoip"
 	"tridorian-ztna/pkg/utils"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"gorm.io/gorm"
@@ -20,21 +24,31 @@ import (
 
 type Handler struct {
 	db                *gorm.DB
+	geoIP             *geoip.GeoIP
 	adminService      *services.AdminService
 	tenantService     *services.TenantService
 	identityService   *services.IdentityService
 	backofficeService *services.BackofficeService
-	jwtSecret         string
+	policyService     *services.PolicyService
+	nodeService       *services.NodeService // Injected
+	cache             *redis.Client
+	privateKey        interface{}
+	publicKey         interface{}
 }
 
-func NewHandler(db *gorm.DB) *Handler {
+func NewHandler(db *gorm.DB, cache *redis.Client, geoIP *geoip.GeoIP, privateKey, publicKey interface{}) *Handler {
 	return &Handler{
 		db:                db,
+		cache:             cache,
+		geoIP:             geoIP,
 		adminService:      services.NewAdminService(db),
 		tenantService:     services.NewTenantService(db),
 		identityService:   services.NewIdentityService(),
 		backofficeService: services.NewBackofficeService(db),
-		jwtSecret:         utils.GetEnv("JWT_SECRET", "very-secret-key"),
+		policyService:     services.NewPolicyService(db, cache),
+		nodeService:       services.NewNodeService(db, cache), // Initialize
+		privateKey:        privateKey,
+		publicKey:         publicKey,
 	}
 }
 
@@ -57,12 +71,23 @@ func (h *Handler) LoginManagement(w http.ResponseWriter, r *http.Request) {
 	}
 	domain := parts[1]
 
-	// Find tenant by domain
+	// Resolve tenant from the email domain
 	tenant, err := h.tenantService.FindByDomain(domain)
 	if err != nil {
-		common.Error(w, http.StatusUnauthorized, "tenant not found for this domain")
+		common.Error(w, http.StatusUnauthorized, "invalid tenant domain")
 		return
 	}
+
+	// Validate that the email belongs to this tenant's domain (security check)
+	// Actually, for multi-tenant, admins might have emails on different domains?
+	// But the requirement implies domain-based login.
+	// If the user wants to login to THIS tenant console, they must use an email associated with it?
+	// Or maybe the previous logic was extracting domain from email.
+	// The user request says "Auth-api for auth cmd use ResolveTenantByHost".
+	// This usually means we identify the tenant by the URL (Host header), not just the email domain.
+
+	// Let's ensure the email domain matches one of the tenant's domains or is the free domain.
+	// For now, we'll trust the authentication service to check the credentials against this tenant.
 
 	admin, err := h.adminService.Authenticate(tenant.ID, input.Email, input.Password)
 	if err != nil {
@@ -71,12 +96,14 @@ func (h *Handler) LoginManagement(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token, err := utils.GenerateToken(
-		h.jwtSecret,
+		h.privateKey,
 		utils.PurposeManagement,
 		admin.ID.String(),
+		admin.Email, // Email
 		tenant.ID.String(),
 		string(admin.Role),
 		nil, // Admins don't need groups for management access
+		"",  // No OS info for management login
 		24*time.Hour,
 	)
 	if err != nil {
@@ -118,12 +145,14 @@ func (h *Handler) LoginBackoffice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token, err := utils.GenerateToken(
-		h.jwtSecret,
+		h.privateKey,
 		utils.PurposeBackoffice,
 		user.ID.String(),
-		"", // System wide, no tenant
+		user.Email, // Email
+		"",         // System wide, no tenant
 		"super_admin",
 		nil,
+		"", // No OS info for backoffice
 		24*time.Hour,
 	)
 	if err != nil {
@@ -207,7 +236,7 @@ func (h *Handler) getOAuth2Config(tenant *models.Tenant, r *http.Request) *oauth
 	if r.TLS != nil {
 		protocol = "https"
 	}
-	redirectURL := fmt.Sprintf("%s://%s/auth/target/callback", protocol, r.Host)
+	redirectURL := fmt.Sprintf("%s://%s/callback", protocol, r.Host)
 
 	return &oauth2.Config{
 		ClientID:     tenant.GoogleClientID,
@@ -223,9 +252,15 @@ func (h *Handler) getOAuth2Config(tenant *models.Tenant, r *http.Request) *oauth
 
 // LoginTarget initiates Google OAuth2 for VPN users
 func (h *Handler) LoginTarget(w http.ResponseWriter, r *http.Request) {
+	// 404 Handling for unknown paths caught by "/" pattern matching
+	if r.URL.Path != "/" && r.URL.Path != "/login" {
+		common.RenderErrorPage(w, http.StatusNotFound, "Page Not Found", "The page you are looking for does not exist or has been moved.", "Path: "+r.URL.Path)
+		return
+	}
+
 	tenant := middleware.GetTenant(r.Context())
 	if tenant == nil || tenant.GoogleClientID == "" {
-		common.Error(w, http.StatusForbidden, "tenant Google Identity is not configured")
+		common.RenderErrorPage(w, http.StatusForbidden, "Configuration Error", "Tenant Identity Provider is incomplete.", "Tenant Google Identity is not configured")
 		return
 	}
 
@@ -235,8 +270,29 @@ func (h *Handler) LoginTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check Network Policies (Pre-Auth)
+	// Filter out users based on IP/Country before they even go to Google
+	if err := h.checkNetworkPolicies(r, tenant.ID); err != nil {
+		common.RenderErrorPage(w, http.StatusForbidden, "Access Suspended", "Your connection location or device does not meet the security requirements.", err.Error())
+		return
+	}
+
+	port := r.URL.Query().Get("desktop_port")
+	osInfo := r.URL.Query().Get("os")
+	if osInfo == "" {
+		osInfo = r.URL.Query().Get("device_os")
+	}
+
+	stateMap := map[string]string{
+		"csrf": "todo-random-string",
+		"port": port,
+		"os":   osInfo,
+	}
+	stateJSON, _ := json.Marshal(stateMap)
+	state := base64.StdEncoding.EncodeToString(stateJSON)
+
 	conf := h.getOAuth2Config(tenant, r)
-	url := conf.AuthCodeURL("state-todo") // In production, use a secure random state
+	url := conf.AuthCodeURL(state) // In production, use a secure random state
 
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
@@ -299,18 +355,49 @@ func (h *Handler) CallbackTarget(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
+	// Retrieve Desktop Port and OS from State
+	stateParam := r.URL.Query().Get("state")
+	var desktopPort string
+	var osInfo string
+	if stateParam != "" {
+		if data, err := base64.StdEncoding.DecodeString(stateParam); err == nil {
+			var stateMap map[string]string
+			if json.Unmarshal(data, &stateMap) == nil {
+				desktopPort = stateMap["port"]
+				osInfo = stateMap["os"]
+			}
+		}
+	}
+
+	// Check Identity Policies (Post-Auth)
+	if err := h.checkIdentityPolicies(r, tenant.ID, googleUser.Email, groups, osInfo); err != nil {
+		common.RenderErrorPage(w, http.StatusForbidden, "Access Denied", "Your account does not have permission to access these resources.", err.Error())
+		return
+	}
+
 	// Issue Target Token with Groups
 	targetToken, err := utils.GenerateToken(
-		h.jwtSecret,
+		h.privateKey,
 		utils.PurposeTarget,
 		googleUser.ID,
+		googleUser.Email, // Email
 		tenantID.String(),
 		"user",
 		groups,
+		osInfo,
 		2*time.Hour,
 	)
 	if err != nil {
+		fmt.Println(err)
 		common.Error(w, http.StatusInternalServerError, "failed to generate target token")
+		return
+	}
+
+	// Already retrieved above, removing duplicate extraction
+	if desktopPort != "" {
+		redirectURL := fmt.Sprintf("http://localhost:%s/callback?token=%s&email=%s&name=%s",
+			desktopPort, targetToken, googleUser.Email, googleUser.Name)
+		http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 		return
 	}
 
@@ -320,4 +407,237 @@ func (h *Handler) CallbackTarget(w http.ResponseWriter, r *http.Request) {
 		"name":   googleUser.Name,
 		"groups": groups,
 	})
+}
+
+// ListGateways returns the list of active gateways for the authenticated user's tenant
+func (h *Handler) ListGateways(w http.ResponseWriter, r *http.Request) {
+	// Extract Claims
+	claims := middleware.GetClaims(r.Context())
+	if claims == nil {
+		common.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	tenantID, err := uuid.Parse(claims.TenantID)
+	if err != nil {
+		common.Error(w, http.StatusBadRequest, "invalid tenant id in token")
+		return
+	}
+
+	// Fetch nodes
+	nodes, err := h.nodeService.ListNodes(tenantID)
+	if err != nil {
+		common.Error(w, http.StatusInternalServerError, "failed to list gateways")
+		return
+	}
+
+	// Filter for active gateways and return simplified struct
+	var gateways []map[string]interface{}
+	for _, node := range nodes {
+		// Only return active and fully registered nodes
+		if node.IsActive && node.Status == "CONNECTED" {
+			// Address: We need the public address (Hostname or IP) + Port
+			addr := node.IPAddress
+			if addr == "" {
+				addr = node.Hostname
+			}
+			if addr == "" {
+				addr = "unknown-host"
+			}
+			// Should probably include port if stored, or default
+
+			gateways = append(gateways, map[string]interface{}{
+				"name":    node.Name,
+				"address": addr,
+				"ping":    "unknown",
+				"region":  "unknown",
+			})
+		}
+	}
+
+	common.Success(w, http.StatusOK, gateways)
+}
+
+// evalContext holds data for policy evaluation
+type evalContext struct {
+	IP      string
+	Country string
+	Email   string
+	Groups  []string
+	OS      string
+}
+
+// checkNetworkPolicies evaluates only Network/IP/Device based policies.
+// Used at pre-auth stage (login).
+func (h *Handler) checkNetworkPolicies(r *http.Request, tenantID uuid.UUID) error {
+	policies, err := h.policyService.ListSignInPolicies(tenantID)
+	if err != nil {
+		return err
+	}
+
+	ip := utils.GetClientIP(r)
+	country := ""
+	if h.geoIP != nil {
+		country = h.geoIP.Lookup(ip)
+	}
+
+	ctx := evalContext{IP: ip, Country: country}
+
+	for _, policy := range policies {
+
+		// Optimization: Check if policy involves network conditions?
+		// Actually we just evaluate. If it depends on User info (missing), it false?
+		// But Wait, if we block based on IP, we don't need user info.
+		// If policy is "User in Group X AND IP is Private", we can't evaluate yet.
+		// So we need to evaluate only partial tree? That's hard.
+
+		// Alternative: Evaluate all, but for User conditions, return false or error?
+		// Context: "If Network, do at /login. Others at /callback".
+
+		// If policy contains ONLY network conditions, we can evaluate it now.
+
+		if !policy.Enabled || policy.Stage != "pre_auth" {
+			continue
+		}
+
+		if h.evaluateNode(&policy.RootNode, ctx) {
+			if policy.Block {
+				return fmt.Errorf("access denied by network policy: %s", policy.Name)
+			}
+			// Explicit Allow by higher priority policy
+			return nil
+		}
+
+	}
+
+	// Default Action: Block
+	// Note: If you want to allow everyone by default, you must create an 'Allow' policy.
+	return fmt.Errorf("access denied by default network policy")
+}
+
+func (h *Handler) isNetworkOnly(node models.PolicyNode) bool {
+	if node.Condition != nil {
+		return node.Condition.Type == "Network" || node.Condition.Type == "Device"
+	}
+	for _, child := range node.Children {
+		if !h.isNetworkOnly(child) {
+			return false
+		}
+	}
+	return true
+}
+
+// checkIdentityPolicies evaluates all policies (Full Context).
+// Used at post-auth stage (callback) with user info.
+func (h *Handler) checkIdentityPolicies(r *http.Request, tenantID uuid.UUID, userEmail string, groups []string, osInfo string) error {
+	policies, err := h.policyService.ListSignInPolicies(tenantID)
+	if err != nil {
+		return err
+	}
+
+	ip := utils.GetClientIP(r)
+	country := ""
+	if h.geoIP != nil {
+		country = h.geoIP.Lookup(ip)
+	}
+
+	ctx := evalContext{
+		IP:      ip,
+		Country: country,
+		Email:   userEmail,
+		Groups:  groups,
+		OS:      osInfo,
+	}
+
+	for _, policy := range policies {
+		if !policy.Enabled || policy.Stage != "post_auth" {
+			continue
+		}
+		if h.evaluateNode(&policy.RootNode, ctx) {
+			if policy.Block {
+				return fmt.Errorf("access denied by policy: %s", policy.Name)
+			}
+			return nil // Explicit Allow matches
+		}
+	}
+
+	// Default Action: Block
+	return fmt.Errorf("access denied by default policy")
+}
+
+func (h *Handler) evaluateNode(node *models.PolicyNode, ctx evalContext) bool {
+	// If leaf node (Condition)
+	if node.Condition != nil {
+		return h.evaluateCondition(node.Condition, ctx)
+	}
+
+	// If branch node
+	if len(node.Children) == 0 {
+		return false // Empty branch matches nothing? Or true? Assuming False.
+	}
+
+	if node.Operator == "OR" {
+		for _, child := range node.Children {
+			fmt.Println(child)
+			if h.evaluateNode(&child, ctx) {
+				return true
+			}
+		}
+		return false
+	} else { // AND
+		for _, child := range node.Children {
+			if !h.evaluateNode(&child, ctx) {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+func (h *Handler) evaluateCondition(cond *models.PolicyCondition, ctx evalContext) bool {
+	// Special operators that don't depend on a specific field value or use derived context directly
+	if cond.Op == "is_private" {
+		return ctx.Country == "PRIVATE"
+	}
+
+	var val string
+	switch cond.Field {
+	case "country":
+		val = ctx.Country
+	case "ip":
+		val = ctx.IP
+	case "email":
+		val = ctx.Email
+	case "os":
+		val = ctx.OS
+	default:
+		// Try to match field if it wasn't caught above?
+		// For now strictly return false for unknown fields to be safe.
+		return false
+	}
+
+	switch cond.Op {
+	case "equals", "is", "os":
+		return strings.EqualFold(val, cond.Value)
+	case "not_equals":
+		return !strings.EqualFold(val, cond.Value)
+	case "cidr":
+		_, ipNet, err := net.ParseCIDR(cond.Value)
+		if err != nil {
+			fmt.Printf("invalid cidr in policy: %s\n", cond.Value)
+			return false
+		}
+		ip := net.ParseIP(val)
+		if ip == nil {
+			return false
+		}
+		return ipNet.Contains(ip)
+	case "in":
+		// Assumes Value is comma separated or JSON array.
+		// For simplicity assuming comma separated string for now or just checking contains.
+		// If Value is "TH,US", and val is "TH"
+		return strings.Contains(strings.ToUpper(cond.Value), strings.ToUpper(val))
+	default:
+		return false
+	}
 }

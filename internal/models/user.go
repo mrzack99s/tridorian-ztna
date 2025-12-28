@@ -5,8 +5,9 @@ import "golang.org/x/crypto/bcrypt"
 type AdminRole string
 
 const (
-	RoleAdmin      AdminRole = "admin"
-	RoleSuperAdmin AdminRole = "super_admin"
+	RoleAdmin       AdminRole = "admin"
+	RoleSuperAdmin  AdminRole = "super_admin"
+	RolePolicyAdmin AdminRole = "policy_admin"
 )
 
 // Administrator is a local account for managing the system.

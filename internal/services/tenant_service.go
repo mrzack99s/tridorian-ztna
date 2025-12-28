@@ -65,6 +65,15 @@ func (s *TenantService) FindByDomain(domain string) (*models.Tenant, error) {
 	return nil, errors.New("tenant not found for domain: " + domain)
 }
 
+// ResolveTenantByHost resolves a tenant from a hostname (e.g. from an incoming HTTP request).
+func (s *TenantService) ResolveTenantByHost(host string) (*models.Tenant, error) {
+	// Remove port if present
+	if strings.Contains(host, ":") {
+		host, _, _ = net.SplitHostPort(host)
+	}
+	return s.FindByDomain(host)
+}
+
 // ActivateDomain sets the primary domain for a tenant.
 // The domain must be either the free domain or a verified custom domain.
 func (s *TenantService) ActivateDomain(tenantID uuid.UUID, domain string) error {
@@ -110,7 +119,30 @@ func (s *TenantService) GetTenantByID(id uuid.UUID) (*models.Tenant, error) {
 // CreateTenantWithAdmin creates a new tenant and its first local administrator.
 // Returns the tenant, administrator, and the plaintext password (for one-time display).
 func (s *TenantService) CreateTenantWithAdmin(name, adminEmail, adminPassword string) (*models.Tenant, *models.Administrator, string, error) {
-	slug := utils.GenerateSlug(name)
+	baseSlug := utils.GenerateSlug(name)
+
+	// Rule 1: If slug is empty (e.g. non-English name), generate random 12 chars
+	if baseSlug == "" {
+		baseSlug = utils.GenerateRandomString(12)
+	}
+
+	slug := baseSlug
+
+	for {
+		var existing models.Tenant
+		// Check both active and soft-deleted tenants for uniqueness
+		if err := s.db.Unscoped().Where("slug = ?", slug).First(&existing).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				break
+			}
+			return nil, nil, "", err
+		}
+
+		// Rule 2: If slug exists, append random 6 chars suffix
+		// Note: If baseSlug itself was random (from Rule 1), and it collided (very unlikely but possible),
+		// we still append suffix.
+		slug = fmt.Sprintf("%s-%s", baseSlug, utils.GenerateRandomString(6))
+	}
 
 	var tenant models.Tenant
 	var admin models.Administrator
@@ -145,7 +177,7 @@ func (s *TenantService) CreateTenantWithAdmin(name, adminEmail, adminPassword st
 			BaseTenant:             models.BaseTenant{TenantID: tenant.ID},
 			Name:                   "System Administrator",
 			Email:                  adminEmail,
-			Role:                   models.RoleAdmin,
+			Role:                   models.RoleSuperAdmin,
 			ChangePasswordRequired: true,
 		}
 		if err := admin.SetPassword(adminPassword); err != nil {
@@ -226,6 +258,12 @@ func (s *TenantService) RegisterCustomDomain(tenantID uuid.UUID, domain string) 
 		if domain != expectedFreeDomain {
 			return nil, fmt.Errorf("you can only use your assigned subdomain: %s", expectedFreeDomain)
 		}
+		// Free domain is always available and verified. Do not add to DB.
+		return &models.CustomDomain{
+			BaseTenant: models.BaseTenant{TenantID: tenantID},
+			Domain:     domain,
+			IsVerified: true,
+		}, nil
 	}
 
 	// Check if already exists
@@ -305,6 +343,32 @@ func (s *TenantService) VerifyCustomDomain(tenantID uuid.UUID, domainID uuid.UUI
 	// NEW: Automatically make it the primary domain upon verification
 	return s.ActivateDomain(tenantID, customDomain.Domain)
 }
+
+// ListDomains returns a list of all verified domains (including free domain) for a tenant.
+func (s *TenantService) ListDomains(tenantID uuid.UUID) ([]string, error) {
+	tenant, err := s.GetTenantByID(tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	var domains []string
+	// 1. Free Domain
+	freeDomain := fmt.Sprintf("%s%s", tenant.Slug, FreeDomainSuffix)
+	domains = append(domains, freeDomain)
+
+	// 2. Verified Custom Domains
+	var customDomains []models.CustomDomain
+	if err := s.db.Where("tenant_id = ? AND is_verified = ?", tenantID, true).Find(&customDomains).Error; err != nil {
+		return nil, err
+	}
+
+	for _, d := range customDomains {
+		domains = append(domains, d.Domain)
+	}
+
+	return domains, nil
+}
+
 func (s *TenantService) DeleteTenant(id uuid.UUID) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		// Delete related data first

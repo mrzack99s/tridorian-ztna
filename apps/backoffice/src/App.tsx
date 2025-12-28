@@ -30,7 +30,9 @@ import {
     Avatar,
     Fade,
     Grow,
-    InputAdornment
+    InputAdornment,
+    Menu,
+    MenuItem
 } from '@mui/material';
 import {
     Dashboard as DashboardIcon,
@@ -46,7 +48,8 @@ import {
     Email as EmailIcon,
     VpnKey as VpnKeyIcon,
     CloudQueue as CloudIcon,
-    Delete as DeleteIcon
+    Delete as DeleteIcon,
+    Logout as LogoutIcon
 } from '@mui/icons-material';
 
 // Premium Google Cloud-inspired Theme
@@ -141,8 +144,10 @@ interface Tenant {
 const App: React.FC = () => {
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [tenants, setTenants] = useState<Tenant[]>([]);
+    const [user, setUser] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [showCreateModal, setShowCreateModal] = useState(false);
+    const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
     const [newTenantName, setNewTenantName] = useState('');
     const [successData, setSuccessData] = useState<{ email: string; pass: string } | null>(null);
@@ -151,6 +156,22 @@ const App: React.FC = () => {
     // Auth Form State
     const [loginEmail, setLoginEmail] = useState('');
     const [loginPassword, setLoginPassword] = useState('');
+    const [backendVersion, setBackendVersion] = useState<string>('');
+
+    useEffect(() => {
+        const fetchVersion = async () => {
+            try {
+                const response = await fetch('/version');
+                if (response.ok) {
+                    const data = await response.json();
+                    setBackendVersion(`v${data.version}`);
+                }
+            } catch (error) {
+                console.error("Failed to fetch backend version:", error);
+            }
+        };
+        fetchVersion();
+    }, []);
 
     const fetchTenants = async () => {
         try {
@@ -174,6 +195,8 @@ const App: React.FC = () => {
         try {
             const res = await fetch('/auth/backoffice/me');
             if (res.ok) {
+                const data = await res.json();
+                setUser(data.data);
                 setIsLoggedIn(true);
                 fetchTenants();
             } else {
@@ -215,6 +238,16 @@ const App: React.FC = () => {
     const handleLogout = async () => {
         await fetch('/auth/backoffice/logout', { method: 'POST' });
         setIsLoggedIn(false);
+        setUser(null);
+        handleMenuClose();
+    };
+
+    const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+        setAnchorEl(event.currentTarget);
+    };
+
+    const handleMenuClose = () => {
+        setAnchorEl(null);
     };
 
     const handleCreateTenant = async () => {
@@ -372,10 +405,59 @@ const App: React.FC = () => {
 
                         <Box sx={{ flexGrow: 1 }} />
 
-                        <IconButton color="inherit" sx={{ mr: 1 }} onClick={handleLogout}>
-                            <SettingsIcon fontSize="small" />
+                        <IconButton
+                            onClick={handleMenuOpen}
+                            sx={{ p: 0 }}
+                        >
+                            <Avatar sx={{ width: 32, height: 32, bgcolor: '#1a73e8', fontSize: '0.875rem', fontWeight: 600 }}>
+                                {user?.name?.charAt(0).toUpperCase() || 'B'}
+                            </Avatar>
                         </IconButton>
-                        <Avatar sx={{ width: 32, height: 32, bgcolor: '#1a73e8', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }} onClick={handleLogout}>Z</Avatar>
+                        <Menu
+                            anchorEl={anchorEl}
+                            open={Boolean(anchorEl)}
+                            onClose={handleMenuClose}
+                            transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+                            anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+                            PaperProps={{
+                                elevation: 0,
+                                sx: {
+                                    overflow: 'visible',
+                                    filter: 'drop-shadow(0px 2px 8px rgba(0,0,0,0.32))',
+                                    mt: 1.5,
+                                    '& .MuiAvatar-root': {
+                                        width: 32,
+                                        height: 32,
+                                        ml: -0.5,
+                                        mr: 1,
+                                    },
+                                    '&:before': {
+                                        content: '""',
+                                        display: 'block',
+                                        position: 'absolute',
+                                        top: 0,
+                                        right: 14,
+                                        width: 10,
+                                        height: 10,
+                                        bgcolor: 'background.paper',
+                                        transform: 'translateY(-50%) rotate(45deg)',
+                                        zIndex: 0,
+                                    },
+                                },
+                            }}
+                        >
+                            <Box sx={{ px: 2, py: 1.5, minWidth: 200 }}>
+                                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{user?.name}</Typography>
+                                <Typography variant="caption" color="text.secondary">{user?.email}</Typography>
+                            </Box>
+                            <Divider />
+                            <MenuItem onClick={handleLogout} sx={{ color: 'error.main', py: 1.5 }}>
+                                <ListItemIcon>
+                                    <LogoutIcon fontSize="small" sx={{ color: 'error.main' }} />
+                                </ListItemIcon>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>Sign Out</Typography>
+                            </MenuItem>
+                        </Menu>
                     </Toolbar>
                 </AppBar>
 
@@ -427,6 +509,14 @@ const App: React.FC = () => {
                                 </ListItem>
                             ))}
                         </List>
+                    </Box>
+                    <Box sx={{ p: 2, borderTop: '1px solid #dadce0', mt: 'auto' }}>
+                        <Typography variant="caption" display="block" color="text.secondary" sx={{ fontWeight: 500 }}>
+                            Client: v0.1.0
+                        </Typography>
+                        <Typography variant="caption" display="block" color="text.secondary">
+                            Server: {backendVersion || '...'}
+                        </Typography>
                     </Box>
                 </Drawer>
 
@@ -526,7 +616,14 @@ const App: React.FC = () => {
                     </Fade>
 
                     {/* Create Dialog - Modern Multi-step feel */}
-                    <Dialog open={showCreateModal} onClose={() => setShowCreateModal(false)} maxWidth="sm" fullWidth>
+                    <Dialog
+                        open={showCreateModal}
+                        onClose={(_, reason) => {
+                            if (reason !== 'backdropClick') setShowCreateModal(false);
+                        }}
+                        maxWidth="sm"
+                        fullWidth
+                    >
                         <DialogTitle sx={{ pb: 1, pt: 3 }}>
                             <Typography variant="h5">Create new tenant</Typography>
                             <Typography variant="body2" color="text.secondary">Onboard a new organization and set up the primary administrator.</Typography>
@@ -553,7 +650,14 @@ const App: React.FC = () => {
                     </Dialog>
 
                     {/* Success Modal - Display Generated Credentials */}
-                    <Dialog open={showSuccessModal} onClose={() => setShowSuccessModal(false)} maxWidth="xs" fullWidth>
+                    <Dialog
+                        open={showSuccessModal}
+                        onClose={(_, reason) => {
+                            if (reason !== 'backdropClick') setShowSuccessModal(false);
+                        }}
+                        maxWidth="xs"
+                        fullWidth
+                    >
                         <DialogTitle sx={{ textAlign: 'center', pt: 4 }}>
                             <CheckCircleIcon sx={{ color: '#1e8e3e', fontSize: 64, mb: 2 }} />
                             <Typography variant="h5" sx={{ fontWeight: 700 }}>Tenant Created!</Typography>
