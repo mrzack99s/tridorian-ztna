@@ -5,17 +5,21 @@
     ],
     "service": "app",
     "workspaceFolder": "/workspace",
-    // Override DB config to use container service names instead of localhost
+    // Environment variables (keys will be loaded from .env)
     "remoteEnv": {
         "DB_HOST": "postgres",
         "CACHE_HOST": "valkey"
     },
+    // Run setup after container is created
+    "postCreateCommand": "bash -c 'if [ ! -f .env ]; then make setup; else echo \"✅ .env exists, skipping setup\"; fi'",
     "customizations": {
         "vscode": {
             "extensions": [
                 "golang.go",
                 "humao.rest-client",
-                "dbankier.vscode-quick-select"
+                "dbankier.vscode-quick-select",
+                "ms-azuretools.vscode-docker",
+                "esbenp.prettier-vscode"
             ]
         }
     },

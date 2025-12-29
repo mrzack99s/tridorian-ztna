@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"html/template"
 	"net/http"
 )
@@ -11,129 +12,184 @@ const blockedPageHTML = `
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ .Title }}</title>
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <title>{{ .Title }} - Tridorian ZTNA</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #f8f9fa;
+            --primary: #4f46e5;
+            --danger: #ef4444;
+            --bg-page: #f8fafc;
             --card-bg: #ffffff;
-            --text-primary: #202124;
-            --text-secondary: #5f6368;
-            --primary: #1a73e8;
-            --error: #d93025;
-            --border-color: #dadce0;
+            --text-main: #1e293b;
+            --text-dim: #64748b;
+            --border: #e2e8f0;
+            --detail-bg: #f1f5f9;
         }
-        body {
+
+        * {
             margin: 0;
             padding: 0;
-            font-family: 'Google Sans', 'Roboto', Helvetica, Arial, sans-serif;
-            background-color: var(--bg-color);
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-page);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(79, 70, 229, 0.05) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(239, 68, 68, 0.03) 0px, transparent 50%);
             height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-primary);
+            color: var(--text-main);
         }
+
         .container {
             width: 100%;
             max-width: 440px;
-            padding: 1rem;
-            box-sizing: border-box;
+            padding: 24px;
+            perspective: 1000px;
         }
+
         .card {
             background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 48px 40px 36px;
+            border: 1px solid var(--border);
+            border-radius: 32px;
+            padding: 56px 40px;
             text-align: center;
-            /* Minimal shadow typical of Google login boxes */
-            box-shadow: 0 1px 2px 0 rgba(60,64,67,0.3), 0 2px 6px 2px rgba(60,64,67,0.15); 
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 10px 10px -5px rgba(0, 0, 0, 0.02);
+            animation: slideUp 0.7s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .icon-wrapper {
-            margin-bottom: 1rem;
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(30px) scale(0.98); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
         }
-        .icon {
-            color: var(--error);
-            width: 48px;
-            height: 48px;
+
+        .icon-box {
+            width: 72px;
+            height: 72px;
+            background: #fff1f2;
+            border-radius: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 32px;
+            color: var(--danger);
+            border: 1px solid #ffe4e6;
         }
+
         h1 {
-            font-family: 'Google Sans', 'Roboto', sans-serif;
-            font-size: 24px;
-            font-weight: 400;
-            line-height: 1.3333;
-            margin: 0 0 12px;
-            padding-bottom: 0;
-            padding-top: 0;
-            color: var(--text-primary);
+            font-size: 26px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            letter-spacing: -0.02em;
+            color: var(--text-main);
         }
-        p {
-            color: var(--text-secondary);
-            font-size: 14px;
-            line-height: 1.5;
-            margin: 0 0 24px;
-            letter-spacing: 0.2px;
+
+        .message {
+            color: var(--text-dim);
+            font-size: 15px;
+            line-height: 1.6;
+            margin-bottom: 32px;
         }
-        .error-details {
-            margin-top: 24px;
-            padding: 12px;
-            background-color: #fce8e6;
-            border-radius: 4px;
-            color: #c5221f;
-            font-family: 'Roboto Mono', monospace;
-            font-size: 12px;
-            word-break: break-all;
+
+        .technical-details {
+            background: var(--detail-bg);
+            border-radius: 20px;
+            padding: 24px;
             text-align: left;
-            border: 1px solid #fad2cf;
         }
-        .divider {
-            height: 1px;
-            background-color: var(--border-color);
-            margin: 24px 0;
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            font-size: 13px;
         }
-        .btn {
-            background-color: var(--primary);
-            color: #fff;
-            padding: 10px 24px;
-            border-radius: 4px;
-            font-weight: 500;
-            font-size: 14px;
-            text-decoration: none;
-            display: inline-block;
-            transition: background-color 0.2s;
-            border: none;
-            cursor: pointer;
-            font-family: 'Google Sans', 'Roboto', sans-serif;
+
+        .detail-row:last-child {
+            margin-bottom: 0;
         }
-        .btn:hover {
-            background-color: #174ea6;
-            box-shadow: 0 1px 2px 0 rgba(60,64,67,.302), 0 1px 3px 1px rgba(60,64,67,.149);
-        }
-        /* Google Sans emulation if not available */
-        @font-face {
-            font-family: 'Google Sans';
-            font-style: normal;
+
+        .label {
+            color: var(--text-dim);
             font-weight: 400;
-            src: local('Google Sans'), local('GoogleSans-Regular'), url(https://fonts.gstatic.com/s/productsans/v5/HYvgU2fE2nRJvZ5JFAumwegdm0LZdjqr5-oayXSOefg.woff2) format('woff2');
+        }
+
+        .value {
+            color: var(--text-main);
+            font-weight: 600;
+            font-family: 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', monospace;
+        }
+
+        .error-msg {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(0,0,0,0.05);
+            color: var(--danger);
+            font-size: 12px;
+            opacity: 0.8;
+            word-break: break-all;
+        }
+
+        .footer {
+            margin-top: 40px;
+            font-size: 12px;
+            color: var(--text-dim);
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            font-weight: 500;
+        }
+
+        /* Abstract soft shadows */
+        .card::after {
+            content: '';
+            position: absolute;
+            top: 10px; left: 10px; right: 10px; bottom: -10px;
+            background: var(--primary);
+            opacity: 0.03;
+            filter: blur(40px);
+            z-index: -1;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="card">
-            <div class="icon-wrapper">
-                <svg class="icon" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+            <div class="icon-box">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
                 </svg>
             </div>
-            <h1>{{ .Title }}</h1>
-            <p>{{ .Message }}</p>
             
-            {{ if .Error }}
-            <div class="error-details">
-                <strong>Error:</strong> {{ .Error }}
+            <h1>{{ .Title }}</h1>
+            <p class="message">{{ .Message }}</p>
+
+            <div class="technical-details">
+                <div class="detail-row">
+                    <span class="label">IP Address</span>
+                    <span class="value">{{ if .IP }}{{ .IP }}{{ else }}—{{ end }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="label">Location</span>
+                    <span class="value">{{ if .Country }}{{ .Country }}{{ else }}Unknown{{ end }}</span>
+                </div>
+                {{ if .Error }}
+                <div class="error-msg">
+                    {{ .Error }}
+                </div>
+                {{ end }}
             </div>
-            {{ end }}
+            
+            <div class="footer">
+                Tridorian ZTNA Security
+            </div>
         </div>
     </div>
 </body>
@@ -141,9 +197,12 @@ const blockedPageHTML = `
 `
 
 // RenderErrorPage renders a beautiful HTML error page
-func RenderErrorPage(w http.ResponseWriter, status int, title, message, errStr string) {
+func RenderErrorPage(w http.ResponseWriter, status int, title, message, errStr string, ip string, country string) {
 	tmpl, err := template.New("error").Parse(blockedPageHTML)
 	if err != nil {
+		if ip != "" || country != "" {
+			errStr = errStr + fmt.Sprintf(" (IP: %s, Location: %s)", ip, country)
+		}
 		http.Error(w, errStr, status)
 		return
 	}
@@ -154,5 +213,7 @@ func RenderErrorPage(w http.ResponseWriter, status int, title, message, errStr s
 		"Title":   title,
 		"Message": message,
 		"Error":   errStr,
+		"IP":      ip,
+		"Country": country,
 	})
 }

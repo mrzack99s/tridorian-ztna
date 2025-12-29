@@ -1,0 +1,19 @@
+**/node_modules
+**/dist
+.git
+.vscode
+.env
+.env.*
+! .env.example
+keys/dev
+keys/prod/*.pem
+! keys/prod/public_key.pem
+*.ps1
+*.sh
+Makefile
+k8s/
+README.md
+DOCKERFILES.md
+COMPLETE.md
+MIGRATION.md
+bin/

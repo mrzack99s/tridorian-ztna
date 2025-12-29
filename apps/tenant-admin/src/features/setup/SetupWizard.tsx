@@ -34,7 +34,8 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ tenant, onRefresh, onComplete
     const steps = ['Connect Domain', 'Identity Provider', 'Review & Launch'];
 
     const handleDomainSubmit = async () => {
-        if (domain.endsWith('.devztna.rattanaburi.ac.th')) {
+        const freeSuffix = tenant?.free_domain_suffix || '.triztnaon.redev.cloud';
+        if (domain.endsWith(freeSuffix)) {
             await activateDomain(domain);
             return;
         }
@@ -164,9 +165,9 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ tenant, onRefresh, onComplete
                                             variant="outlined"
                                             fullWidth
                                             sx={{ mb: 3 }}
-                                            onClick={() => setDomain(`${tenant?.slug}.devztna.rattanaburi.ac.th`)}
+                                            onClick={() => setDomain(`${tenant?.slug}${tenant?.free_domain_suffix || '.triztnaon.redev.cloud'}`)}
                                         >
-                                            Use free domain: {tenant?.slug}.devztna.rattanaburi.ac.th
+                                            Use free domain: {tenant?.slug}{tenant?.free_domain_suffix || '.triztnaon.redev.cloud'}
                                         </Button>
                                         <Button variant="contained" fullWidth size="large" onClick={handleDomainSubmit}>Next</Button>
                                     </>

@@ -1,0 +1,49 @@
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: ztna-healthcheck
+  namespace: tridorian-ztna
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        port: 8080
+        requestPath: /health
+  targetRef:
+    group: ""
+    kind: Service
+    name: management-api
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: auth-healthcheck
+  namespace: tridorian-ztna
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        port: 8081
+        requestPath: /health
+  targetRef:
+    group: ""
+    kind: Service
+    name: auth-api
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: gateway-cp-healthcheck
+  namespace: tridorian-ztna
+spec:
+  default:
+    config:
+      type: TCP
+      tcpHealthCheck:
+        port: 5443
+  targetRef:
+    group: ""
+    kind: Service
+    name: gateway-controlplane

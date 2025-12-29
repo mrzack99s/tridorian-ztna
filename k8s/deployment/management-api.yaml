@@ -1,0 +1,140 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: management-api
+  labels:
+    app: management-api
+    component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: management-api
+  template:
+    metadata:
+      labels:
+        app: management-api
+        component: backend
+    spec:
+      serviceAccountName: gke-secrets-sa
+      containers:
+      - name: management-api
+        image: asia-southeast1-docker.pkg.dev/trivpn-demo-prj/triztna/management-api:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: APP_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: ztna-config
+              key: APP_ENV
+        - name: MGMT_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: ztna-config
+              key: MGMT_PORT
+        - name: FREE_DOMAIN_SUFFIX
+          valueFrom:
+            configMapKeyRef:
+              name: ztna-config
+              key: FREE_DOMAIN_SUFFIX
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: database-secrets
+              key: host
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: database-secrets
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-secrets
+              key: password
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: database-secrets
+              key: database
+        - name: DB_SSL_MODE
+          value: "require"
+        - name: CACHE_HOST
+          value: "valkey-service.tridorian-ztna.svc.cluster.local"
+        - name: CACHE_PORT
+          value: "6379"
+        - name: CACHE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cache-secrets
+              key: password
+        - name: ZTNA_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ztna-secrets
+              key: private-key
+        - name: ZTNA_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ztna-secrets
+              key: public-key
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: management-api
+  labels:
+    app: management-api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: metrics
+  selector:
+    app: management-api

@@ -42,15 +42,22 @@ bin/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.production
 
 # Specific Secrets and sensitive files
 client_secret*.json
 service-account*.json
 *.pem
+!keys/public_key.pem
+!keys/dev/*.pem
 *.key
 *.p12
 *.crt
 credentials.json
+keys/private_key.pem
+keys/prod/*.pem
+keys/prod/private_key.pem
+keys/prod/public_key.pem
 
 # IDEs and Editors
 .vscode/

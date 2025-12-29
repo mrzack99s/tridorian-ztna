@@ -7,6 +7,7 @@ import (
 	"tridorian-ztna/internal/api/common"
 	"tridorian-ztna/internal/models"
 	"tridorian-ztna/internal/services"
+	"tridorian-ztna/pkg/utils"
 
 	"github.com/google/uuid"
 )
@@ -56,7 +57,8 @@ func ResolveTenantByHost(tenantService *services.TenantService) func(http.Handle
 
 				if err != nil {
 					// User is accessing via an unknown or deleted tenant domain
-					common.RenderErrorPage(w, http.StatusUnauthorized, "Unknown Tenant", "The domain you are accessing is not a valid Tridorian ZTNA tenant.", "Domain: "+host)
+					ip := utils.GetClientIP(r)
+					common.RenderErrorPage(w, http.StatusUnauthorized, "Unknown Tenant", "The domain you are accessing is not a valid Tridorian ZTNA tenant.", "Domain: "+host, ip, "")
 					return
 				}
 			}

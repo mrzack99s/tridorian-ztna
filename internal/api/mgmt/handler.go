@@ -40,7 +40,10 @@ func (h *Handler) ListTenants(w http.ResponseWriter, r *http.Request) {
 		common.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	common.Success(w, http.StatusOK, tenants)
+	common.Success(w, http.StatusOK, map[string]interface{}{
+		"tenants":            tenants,
+		"free_domain_suffix": h.tenantService.GetFreeDomainSuffix(),
+	})
 }
 
 func (h *Handler) ListAdmins(w http.ResponseWriter, r *http.Request) {
@@ -167,9 +170,10 @@ func (h *Handler) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	log.Printf("🏢 Created Tenant: %s (Admin: %s, Pass: %s)", tenant.Name, admin.Email, password)
 
 	common.Success(w, http.StatusCreated, map[string]interface{}{
-		"tenant":         tenant,
-		"admin_email":    admin.Email,
-		"admin_password": password,
+		"tenant":             tenant,
+		"admin_email":        admin.Email,
+		"admin_password":     password,
+		"free_domain_suffix": h.tenantService.GetFreeDomainSuffix(),
 	})
 }
 
@@ -261,7 +265,16 @@ func (h *Handler) GetMyTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	common.Success(w, http.StatusOK, tenant)
+	// Use a map to include the global free domain suffix
+	response := struct {
+		*models.Tenant
+		FreeDomainSuffix string `json:"free_domain_suffix"`
+	}{
+		Tenant:           tenant,
+		FreeDomainSuffix: h.tenantService.GetFreeDomainSuffix(),
+	}
+
+	common.Success(w, http.StatusOK, response)
 }
 
 func (h *Handler) RegisterCustomDomain(w http.ResponseWriter, r *http.Request) {

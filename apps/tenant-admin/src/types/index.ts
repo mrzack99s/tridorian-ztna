@@ -13,6 +13,7 @@ export interface Tenant {
     primary_domain: string;
     google_admin_email?: string;
     google_client_id?: string;
+    free_domain_suffix?: string;
 }
 
 

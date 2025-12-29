@@ -120,7 +120,7 @@ func (a *App) Greet(domain string) string {
 	if !strings.HasPrefix(target, "http") {
 		target = "http://" + target
 	}
-	authURL := fmt.Sprintf("%s:8081/?desktop_port=%d&os=%s", target, port, runtime.GOOS)
+	authURL := fmt.Sprintf("%s/?desktop_port=%d&os=%s", target, port, runtime.GOOS)
 
 	log.Printf("Opening browser: %s", authURL)
 	go browser.OpenURL(authURL)

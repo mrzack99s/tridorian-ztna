@@ -138,6 +138,7 @@ interface Tenant {
     name: string;
     slug: string;
     primary_domain: string;
+    free_domain_suffix?: string;
     google_client_id?: string;
 }
 
@@ -182,7 +183,13 @@ const App: React.FC = () => {
             }
             const data = await res.json();
             if (data.success) {
-                setTenants(data.data);
+                const { tenants, free_domain_suffix } = data.data;
+                // Inject the common free suffix into each tenant for UI display if needed
+                const enrichedTenants = tenants.map((t: any) => ({
+                    ...t,
+                    free_domain_suffix
+                }));
+                setTenants(enrichedTenants);
             }
         } catch (err) {
             console.error('Failed to fetch tenants:', err);
@@ -577,9 +584,9 @@ const App: React.FC = () => {
 
                                                         <Box sx={{ mb: 3, p: 2, bgcolor: '#f1f3f4', borderRadius: 1.5 }}>
                                                             <Typography variant="caption" sx={{ display: 'block', color: '#5f6368', fontWeight: 700, mb: 0.5, letterSpacing: 0.5 }}>GATEWAY ENDPOINT</Typography>
-                                                            <Typography variant="body2" sx={{ fontWeight: 600, color: tenant.primary_domain ? '#202124' : '#f9ab00', display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                                                {tenant.primary_domain || 'Awaiting Setup'}
-                                                                {!tenant.primary_domain && <ErrorOutlineIcon sx={{ fontSize: 14 }} />}
+                                                            <Typography variant="body2" sx={{ fontWeight: 600, color: tenant.primary_domain ? '#202124' : '#5f6368', display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                                                {tenant.primary_domain || `${tenant.slug}${tenant.free_domain_suffix || '.triztnaon.redev.cloud'}`}
+                                                                {!tenant.primary_domain && <Chip label="Pending" size="small" sx={{ height: 16, fontSize: '0.6rem', ml: 1, bgcolor: '#f9ab00', color: '#fff', border: 'none' }} />}
                                                             </Typography>
                                                         </Box>
 

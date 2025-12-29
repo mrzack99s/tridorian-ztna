@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -254,13 +255,24 @@ func (h *Handler) getOAuth2Config(tenant *models.Tenant, r *http.Request) *oauth
 func (h *Handler) LoginTarget(w http.ResponseWriter, r *http.Request) {
 	// 404 Handling for unknown paths caught by "/" pattern matching
 	if r.URL.Path != "/" && r.URL.Path != "/login" {
-		common.RenderErrorPage(w, http.StatusNotFound, "Page Not Found", "The page you are looking for does not exist or has been moved.", "Path: "+r.URL.Path)
+		ip := utils.GetClientIP(r)
+		country := ""
+		if h.geoIP != nil {
+			country = h.geoIP.Lookup(ip)
+		}
+		common.RenderErrorPage(w, http.StatusNotFound, "Page Not Found", "The page you are looking for does not exist or has been moved.", "Path: "+r.URL.Path, ip, country)
 		return
 	}
 
 	tenant := middleware.GetTenant(r.Context())
+	ip := utils.GetClientIP(r)
+	country := ""
+	if h.geoIP != nil {
+		country = h.geoIP.Lookup(ip)
+	}
+
 	if tenant == nil || tenant.GoogleClientID == "" {
-		common.RenderErrorPage(w, http.StatusForbidden, "Configuration Error", "Tenant Identity Provider is incomplete.", "Tenant Google Identity is not configured")
+		common.RenderErrorPage(w, http.StatusForbidden, "Configuration Error", "Tenant Identity Provider is incomplete.", "Tenant Google Identity is not configured", ip, country)
 		return
 	}
 
@@ -273,7 +285,7 @@ func (h *Handler) LoginTarget(w http.ResponseWriter, r *http.Request) {
 	// Check Network Policies (Pre-Auth)
 	// Filter out users based on IP/Country before they even go to Google
 	if err := h.checkNetworkPolicies(r, tenant.ID); err != nil {
-		common.RenderErrorPage(w, http.StatusForbidden, "Access Suspended", "Your connection location or device does not meet the security requirements.", err.Error())
+		common.RenderErrorPage(w, http.StatusForbidden, "Access Suspended", "Your connection location or device does not meet the security requirements.", err.Error(), ip, country)
 		return
 	}
 
@@ -371,7 +383,12 @@ func (h *Handler) CallbackTarget(w http.ResponseWriter, r *http.Request) {
 
 	// Check Identity Policies (Post-Auth)
 	if err := h.checkIdentityPolicies(r, tenant.ID, googleUser.Email, groups, osInfo); err != nil {
-		common.RenderErrorPage(w, http.StatusForbidden, "Access Denied", "Your account does not have permission to access these resources.", err.Error())
+		ip := utils.GetClientIP(r)
+		country := ""
+		if h.geoIP != nil {
+			country = h.geoIP.Lookup(ip)
+		}
+		common.RenderErrorPage(w, http.StatusForbidden, "Access Denied", "Your account does not have permission to access these resources.", err.Error(), ip, country)
 		return
 	}
 
@@ -484,30 +501,24 @@ func (h *Handler) checkNetworkPolicies(r *http.Request, tenantID uuid.UUID) erro
 	ctx := evalContext{IP: ip, Country: country}
 
 	for _, policy := range policies {
-
-		// Optimization: Check if policy involves network conditions?
-		// Actually we just evaluate. If it depends on User info (missing), it false?
-		// But Wait, if we block based on IP, we don't need user info.
-		// If policy is "User in Group X AND IP is Private", we can't evaluate yet.
-		// So we need to evaluate only partial tree? That's hard.
-
-		// Alternative: Evaluate all, but for User conditions, return false or error?
-		// Context: "If Network, do at /login. Others at /callback".
-
-		// If policy contains ONLY network conditions, we can evaluate it now.
+		log.Printf("[PolicyDebug] Checking policy: %s (Enabled: %v, Stage: %s)", policy.Name, policy.Enabled, policy.Stage)
 
 		if !policy.Enabled || policy.Stage != "pre_auth" {
 			continue
 		}
 
-		if h.evaluateNode(&policy.RootNode, ctx) {
+		result := h.evaluateNode(&policy.RootNode, ctx)
+		log.Printf("[PolicyDebug] Policy %s evaluateNode result: %v (details: IP=%s, Country=%s)", policy.Name, result, ctx.IP, ctx.Country)
+
+		if result {
 			if policy.Block {
+				log.Printf("[PolicyDebug] Policy %s BLOCKED", policy.Name)
 				return fmt.Errorf("access denied by network policy: %s", policy.Name)
 			}
 			// Explicit Allow by higher priority policy
+			log.Printf("[PolicyDebug] Policy %s ALLOWED", policy.Name)
 			return nil
 		}
-
 	}
 
 	// Default Action: Block
@@ -566,77 +577,128 @@ func (h *Handler) checkIdentityPolicies(r *http.Request, tenantID uuid.UUID, use
 }
 
 func (h *Handler) evaluateNode(node *models.PolicyNode, ctx evalContext) bool {
-	// If leaf node (Condition)
+	if node == nil {
+		return false
+	}
+
+	// Leaf Node (Condition)
 	if node.Condition != nil {
 		return h.evaluateCondition(node.Condition, ctx)
 	}
 
-	// If branch node
+	// Branch Node (Children)
 	if len(node.Children) == 0 {
-		return false // Empty branch matches nothing? Or true? Assuming False.
+		return false
 	}
 
 	if node.Operator == "OR" {
-		for _, child := range node.Children {
-			fmt.Println(child)
-			if h.evaluateNode(&child, ctx) {
+		for i := range node.Children {
+			if h.evaluateNode(&node.Children[i], ctx) {
 				return true
 			}
 		}
 		return false
-	} else { // AND
-		for _, child := range node.Children {
-			if !h.evaluateNode(&child, ctx) {
-				return false
-			}
-		}
-		return true
 	}
+
+	// Default: AND
+	for i := range node.Children {
+		if !h.evaluateNode(&node.Children[i], ctx) {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) evaluateCondition(cond *models.PolicyCondition, ctx evalContext) bool {
-	// Special operators that don't depend on a specific field value or use derived context directly
-	if cond.Op == "is_private" {
-		return ctx.Country == "PRIVATE"
-	}
-
-	var val string
-	switch cond.Field {
-	case "country":
-		val = ctx.Country
-	case "ip":
-		val = ctx.IP
-	case "email":
-		val = ctx.Email
-	case "os":
-		val = ctx.OS
-	default:
-		// Try to match field if it wasn't caught above?
-		// For now strictly return false for unknown fields to be safe.
+	if cond == nil {
+		log.Printf("[PolicyDebug] evaluateCondition: condition is nil")
 		return false
 	}
 
-	switch cond.Op {
+	log.Printf("[PolicyDebug] evaluateCondition: Type=%s, Field=%s, Op=%s, Value=%s", cond.Type, cond.Field, cond.Op, cond.Value)
+
+	// Special operator that doesn't depend on a field
+	if cond.Op == "is_private" {
+		res := ctx.Country == "PRIVATE"
+		log.Printf("[PolicyDebug] evaluateCondition is_private result: %v", res)
+		return res
+	}
+
+	var val string
+	field := strings.ToLower(cond.Field)
+	switch field {
+	case "country", "location":
+		val = ctx.Country
+	case "ip", "ip_address":
+		val = ctx.IP
+	case "email", "user_email":
+		val = ctx.Email
+	case "os", "device_os":
+		val = ctx.OS
+	case "group", "user_group":
+		matched := false
+		for _, g := range ctx.Groups {
+			if h.compareValues(g, cond.Op, cond.Value) {
+				matched = true
+				break
+			}
+		}
+		log.Printf("[PolicyDebug] evaluateCondition group match result: %v (user groups: %v)", matched, ctx.Groups)
+		return matched
+	default:
+		log.Printf("[PolicyDebug] evaluateCondition unknown field: %s", field)
+		return false
+	}
+
+	res := h.compareValues(val, cond.Op, cond.Value)
+	log.Printf("[PolicyDebug] evaluateCondition result: %v (val=%s, target=%s)", res, val, cond.Value)
+	return res
+}
+
+func (h *Handler) compareValues(val, op, target string) bool {
+	val = strings.TrimSpace(val)
+	target = strings.TrimSpace(target)
+
+	switch strings.ToLower(op) {
 	case "equals", "is", "os":
-		return strings.EqualFold(val, cond.Value)
-	case "not_equals":
-		return !strings.EqualFold(val, cond.Value)
+		return strings.EqualFold(val, target)
+	case "not_equals", "not":
+		return !strings.EqualFold(val, target)
 	case "cidr":
-		_, ipNet, err := net.ParseCIDR(cond.Value)
+		_, ipNet, err := net.ParseCIDR(target)
 		if err != nil {
-			fmt.Printf("invalid cidr in policy: %s\n", cond.Value)
 			return false
 		}
 		ip := net.ParseIP(val)
-		if ip == nil {
-			return false
+		return ip != nil && ipNet.Contains(ip)
+	case "not_cidr":
+		_, ipNet, err := net.ParseCIDR(target)
+		if err != nil {
+			return true // If CIDR is invalid, it doesn't contain the IP
 		}
-		return ipNet.Contains(ip)
+		ip := net.ParseIP(val)
+		return ip != nil && !ipNet.Contains(ip)
 	case "in":
-		// Assumes Value is comma separated or JSON array.
-		// For simplicity assuming comma separated string for now or just checking contains.
-		// If Value is "TH,US", and val is "TH"
-		return strings.Contains(strings.ToUpper(cond.Value), strings.ToUpper(val))
+		// Check both comma-separated and case-insensitive
+		parts := strings.Split(target, ",")
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			// Also support JSON array style if accidentally passed
+			p = strings.Trim(p, "[]\"")
+			if strings.EqualFold(val, p) {
+				return true
+			}
+		}
+		// Fallback for simple "contains" behavior if not comma-separated
+		return strings.Contains(strings.ToUpper(target), strings.ToUpper(val)) && val != ""
+	case "not_in":
+		return !h.compareValues(val, "in", target)
+	case "contains":
+		return strings.Contains(strings.ToLower(val), strings.ToLower(target))
+	case "starts_with":
+		return strings.HasPrefix(strings.ToLower(val), strings.ToLower(target))
+	case "ends_with":
+		return strings.HasSuffix(strings.ToLower(val), strings.ToLower(target))
 	default:
 		return false
 	}

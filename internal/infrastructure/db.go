@@ -22,17 +22,14 @@ func SetupDatabase() *gorm.DB {
 	dbName := utils.GetEnv("DB_NAME", "trivpn-trimanaged")
 	appEnv := utils.GetEnv("APP_ENV", "development")
 
-	sslMode := "disable"
 	logLevel := logger.Info
-
 	if appEnv == "production" {
-		sslMode = "require"
 		logLevel = logger.Error
 	}
 
 	dsn := fmt.Sprintf(
-		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Bangkok",
-		dbHost, dbUser, dbPass, dbName, dbPort, sslMode,
+		"host=%s user=%s password=%s dbname=%s port=%s TimeZone=Asia/Bangkok",
+		dbHost, dbUser, dbPass, dbName, dbPort,
 	)
 
 	newLogger := logger.New(
@@ -44,6 +41,13 @@ func SetupDatabase() *gorm.DB {
 			Colorful:                  appEnv != "production",
 		},
 	)
+
+	maxOpenConns := 50
+	if appEnv == "production" {
+		maxOpenConns = 100
+	}
+
+	log.Printf("Connect database to host: %s, port: %s, user: %s, name: %s", dbHost, dbPort, dbUser, dbName)
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger:      newLogger,
@@ -59,7 +63,7 @@ func SetupDatabase() *gorm.DB {
 	}
 
 	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(50)
+	sqlDB.SetMaxOpenConns(maxOpenConns)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 
 	if appEnv != "production" {
@@ -88,24 +92,24 @@ func SetupDatabase() *gorm.DB {
 			log.Fatalf("Failed to get SQL DB object: %v", err)
 		}
 
-		// backofficeEmail := utils.GetEnv("BACKOFFICE_USER", "tri")
-		// backofficePass := utils.GetEnv("BACKOFFICE_PASSWORD", "password")
-		// backofficeUser := &models.BackofficeUser{
-		// 	Name:  "System Admin",
-		// 	Email: backofficeEmail,
-		// }
-		// backofficeUser.SetPassword(backofficePass)
-		// db.Create(backofficeUser)
-		// log.Printf("🔑 Backoffice created: User=%s, Pass=%s", backofficeEmail, backofficePass)
+		backofficeEmail := utils.GetEnv("BACKOFFICE_USER", "tri")
+		backofficePass := utils.GetEnv("BACKOFFICE_PASSWORD", "password")
+		backofficeUser := &models.BackofficeUser{
+			Name:  "System Admin",
+			Email: backofficeEmail,
+		}
+		backofficeUser.SetPassword(backofficePass)
+		db.Create(backofficeUser)
+		log.Printf("🔑 Backoffice created: User=%s, Pass=%s", backofficeEmail, backofficePass)
 
-		// nodeSku := &models.NodeSku{
-		// 	Name:        "Trial SKU",
-		// 	Description: "Trial SKU for testing purposes",
-		// 	MaxUsers:    100,
-		// 	Bandwidth:   10,
-		// 	PriceCents:  0,
-		// }
-		// db.Create(nodeSku)
+		nodeSku := &models.NodeSku{
+			Name:        "Basic SKU",
+			Description: "Purpose: Development and testing",
+			MaxUsers:    10,
+			Bandwidth:   100,
+			PriceCents:  100,
+		}
+		db.Create(nodeSku)
 
 	}
 

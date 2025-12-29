@@ -132,7 +132,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh, user }) 
     // Domain Handlers
     const handleDomainSubmit = async () => {
         const domainToRegister = newDomain.toLowerCase().trim();
-        const freeSuffix = '.devztna.rattanaburi.ac.th';
+        const freeSuffix = tenant?.free_domain_suffix || '.triztnaon.redev.cloud';
         if (domainToRegister.endsWith(freeSuffix)) {
             const expectedDomain = `${tenant?.slug}${freeSuffix}`;
             if (domainToRegister !== expectedDomain) {
@@ -464,7 +464,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh, user }) 
                                 Changing your domain will update the endpoint used by users and nodes. Authentication flows may be affected.
                             </Typography>
                             {(() => {
-                                const freeSuffix = '.devztna.rattanaburi.ac.th';
+                                const freeSuffix = tenant?.free_domain_suffix || '.triztnaon.redev.cloud';
                                 const expectedFreeDomain = `${tenant?.slug}${freeSuffix}`;
                                 const isFreeDomainSuffix = newDomain.toLowerCase().endsWith(freeSuffix);
                                 const isInvalidFreeDomain = isFreeDomainSuffix && newDomain.toLowerCase() !== expectedFreeDomain;
@@ -481,7 +481,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh, user }) 
                                             disabled={loading}
                                             autoFocus
                                             error={isInvalidFreeDomain}
-                                            helperText={isInvalidFreeDomain ? `For onzt.tridorian.com, you must use your organization slug: ${expectedFreeDomain}` : ""}
+                                            helperText={isInvalidFreeDomain ? `For this domain, you must use your organization slug: ${expectedFreeDomain}` : ""}
                                         />
                                         <Box sx={{ mt: 1 }}>
                                             <Button
@@ -489,12 +489,12 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh, user }) 
                                                 onClick={() => setNewDomain(expectedFreeDomain)}
                                                 sx={{ textTransform: 'none' }}
                                             >
-                                                Use onzt.tridorian.com: {expectedFreeDomain}
+                                                Use free domain: {expectedFreeDomain}
                                             </Button>
                                         </Box>
                                         {isValidFreeDomain && (
                                             <Typography variant="caption" color="success.main" sx={{ display: 'block', mt: 2, fontWeight: 600 }}>
-                                                ✓ This onzt.tridorian.com domain is pre-verified and active immediately.
+                                                ✓ This domain is pre-verified and active immediately.
                                             </Typography>
                                         )}
                                     </>
@@ -529,10 +529,10 @@ const SettingsView: React.FC<SettingsViewProps> = ({ tenant, onRefresh, user }) 
                         <Button
                             variant="contained"
                             onClick={handleDomainSubmit}
-                            disabled={!newDomain || loading || (newDomain.toLowerCase().endsWith('.devztna.rattanaburi.ac.th') && newDomain.toLowerCase() !== `${tenant?.slug}.devztna.rattanaburi.ac.th`)}
+                            disabled={!newDomain || loading || (newDomain.toLowerCase().endsWith(tenant?.free_domain_suffix || '.triztnaon.redev.cloud') && newDomain.toLowerCase() !== `${tenant?.slug}${tenant?.free_domain_suffix || '.triztnaon.redev.cloud'}`)}
                             sx={{ borderRadius: 2, px: 3 }}
                         >
-                            {loading ? <CircularProgress size={20} color="inherit" /> : (newDomain.toLowerCase().endsWith('.devztna.rattanaburi.ac.th') ? 'Update Domain' : 'Request Update')}
+                            {loading ? <CircularProgress size={20} color="inherit" /> : (newDomain.toLowerCase().endsWith(tenant?.free_domain_suffix || '.triztnaon.redev.cloud') ? 'Update Domain' : 'Request Update')}
                         </Button>
                     ) : (
                         <Button

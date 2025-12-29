@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tridorian-ztna
+  labels:
+    app.kubernetes.io/name: tridorian-ztna
+    app.kubernetes.io/part-of: tridorian-ztna
+    environment: production

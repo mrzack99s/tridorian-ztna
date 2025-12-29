@@ -10,20 +10,44 @@ services:
     
     # Overrides default command so things don't shut down after the process ends.
     command: sleep infinity
+    
+    # Environment variables for development
+    environment:
+      - APP_ENV=development
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=devuser
+      - DB_PASSWORD=P@ssw0rd
+      - DB_NAME=trivpn-trimanaged
+      - CACHE_HOST=valkey
+      - CACHE_PORT=6379
+      - CACHE_PASSWORD=P@ssw0rd
+      - ZTNA_PRIVATE_KEY=${ZTNA_PRIVATE_KEY}
+      - ZTNA_PUBLIC_KEY=${ZTNA_PUBLIC_KEY}
+    
     cap_add:
       - NET_ADMIN
     devices:
       - /dev/net/tun
+    
     # Ensure dependencies are started
     depends_on:
       - postgres
       - valkey
+    
     ports:
-      - "8080:8080"
-      - "8081:8081"
-      - "5443:5443"
+      # Backend services
+      - "8080:8080"  # Management API
+      - "8081:8081"  # Auth API
+      - "5443:5443"  # Gateway Control Plane (gRPC)
       - "6500:6500/tcp"
-      - "6500:6500/udp"
+      - "6500:6500/udp"  # Gateway Agent (VPN)
+      # Frontend services
+      - "3000:3000"  # Tenant Admin
+      - "3001:3001"  # Backoffice
+      - "5173:5173"  # Vite dev server (Tenant Admin)
+      - "5174:5174"  # Vite dev server (Backoffice)
+
   postgres:
     image: postgres:18
     environment:
@@ -32,9 +56,28 @@ services:
       POSTGRES_DB: trivpn-trimanaged
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devuser"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   valkey:
     image: valkey/valkey:9-alpine
     command: valkey-server --requirepass "P@ssw0rd"
     ports:
       - "6379:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  valkey_data:
+

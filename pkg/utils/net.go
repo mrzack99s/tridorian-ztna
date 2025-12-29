@@ -8,7 +8,7 @@ import (
 )
 
 // GetClientIP extracts the client IP address from the request.
-// It checks X-Forwarded-For and X-Real-IP headers first.
+// It checks X-Forwarded-For, X-Real-IP, and X-Client-IP headers first.
 func GetClientIP(r *http.Request) string {
 	// 1. X-Forwarded-For
 	xff := r.Header.Get("X-Forwarded-For")
@@ -25,7 +25,13 @@ func GetClientIP(r *http.Request) string {
 		return strings.TrimSpace(xri)
 	}
 
-	// 3. RemoteAddr
+	// 3. X-Client-IP
+	xci := r.Header.Get("X-Client-IP")
+	if xci != "" {
+		return strings.TrimSpace(xci)
+	}
+
+	// 4. RemoteAddr
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
 		return host

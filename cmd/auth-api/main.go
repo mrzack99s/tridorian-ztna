@@ -13,16 +13,22 @@ import (
 
 func main() {
 
-	privPEM := `-----BEGIN PRIVATE KEY-----
-MC4CAQAwBQYDK2VwBCIEILI5SZI/4pD9D6Zz4r4fz6l291myurzDhcHx/KvAWb2X
------END PRIVATE KEY-----`
-	pubPEM := `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAox3VKM3biK8+yLk8O600A/N91BHiPZOfY0Oqalp6zqA=
------END PUBLIC KEY-----`
+	// Security: Load EdDSA Keys from Environment Variables
+	// Generate keys using: ./scripts/generate-keys.sh
 
 	appEnv := utils.GetEnv("APP_ENV", "development")
 	if appEnv == "development" {
 		godotenv.Load()
+	}
+
+	privPEM := utils.GetEnv("ZTNA_PRIVATE_KEY", "")
+	if privPEM == "" {
+		log.Fatal("❌ ZTNA_PRIVATE_KEY environment variable is required. Run: ./scripts/generate-keys.sh")
+	}
+
+	pubPEM := utils.GetEnv("ZTNA_PUBLIC_KEY", "")
+	if pubPEM == "" {
+		log.Fatal("❌ ZTNA_PUBLIC_KEY environment variable is required. Run: ./scripts/generate-keys.sh")
 	}
 
 	db := infrastructure.SetupDatabase()

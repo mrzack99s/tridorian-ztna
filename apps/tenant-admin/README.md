@@ -28,4 +28,4 @@ Management portal for individual Tenants/Organizations.
     ```
 
 The app will be available at `http://localhost:5173`. 
-**Note**: To access as a specific tenant, ensure you are using the correct hostname (e.g. `[tenant-slug].devztna.rattanaburi.ac.th`) and that it maps to localhost.
+**Note**: To access as a specific tenant, ensure you are using the correct hostname (e.g. `[tenant-slug].triztnaon.redev.cloud`) and that it maps to localhost.

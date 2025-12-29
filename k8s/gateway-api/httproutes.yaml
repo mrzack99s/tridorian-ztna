@@ -1,0 +1,146 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: management-api-route
+  namespace: tridorian-ztna
+  labels:
+    app: management-api
+spec:
+  parentRefs:
+  - name: tridorian-ztna-gateway
+    sectionName: https
+  hostnames:
+  - "mgmt.triztna.redev.cloud"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api
+    - path:
+        type: PathPrefix
+        value: /auth
+    - path:
+        type: PathPrefix
+        value: /version
+    - path:
+        type: PathPrefix
+        value: /health
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: management-api
+      port: 8080
+      weight: 100
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: auth-api-route
+  namespace: tridorian-ztna
+  labels:
+    app: auth-api
+spec:
+  parentRefs:
+  - name: tridorian-ztna-gateway
+    sectionName: https
+  # hostnames removed to match ANY domain
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: auth-api
+      port: 8081
+      weight: 100
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: tenant-admin-route
+  namespace: tridorian-ztna
+  labels:
+    app: tenant-admin
+spec:
+  parentRefs:
+  - name: tridorian-ztna-gateway
+    sectionName: https
+  hostnames:
+  - "console.triztna.redev.cloud"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api
+    - path:
+        type: PathPrefix
+        value: /auth
+    - path:
+        type: PathPrefix
+        value: /version
+    backendRefs:
+    - name: management-api
+      port: 8080
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: tenant-admin
+      port: 80
+      weight: 100
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: backoffice-route
+  namespace: tridorian-ztna
+  labels:
+    app: backoffice
+spec:
+  parentRefs:
+  - name: tridorian-ztna-gateway
+    sectionName: https
+  hostnames:
+  - "beoffice.triztna.redev.cloud"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api
+    - path:
+        type: PathPrefix
+        value: /auth
+    - path:
+        type: PathPrefix
+        value: /version
+    backendRefs:
+    - name: management-api
+      port: 8080
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: backoffice
+      port: 80
+      weight: 100
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: http-redirect
+  namespace: tridorian-ztna
+  labels:
+    app: redirect
+spec:
+  parentRefs:
+  - name: tridorian-ztna-gateway
+    sectionName: http
+  rules:
+  - filters:
+    - type: RequestRedirect
+      requestRedirect:
+        scheme: https
+        statusCode: 301

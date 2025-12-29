@@ -1,0 +1,158 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-controlplane
+  labels:
+    app: gateway-controlplane
+    component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-controlplane
+  template:
+    metadata:
+      labels:
+        app: gateway-controlplane
+        component: backend
+    spec:
+      serviceAccountName: gke-secrets-sa
+      containers:
+      - name: gateway-controlplane
+        image: asia-southeast1-docker.pkg.dev/trivpn-demo-prj/triztna/gateway-controlplane:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5443
+          name: grpc
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: APP_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: ztna-config
+              key: APP_ENV
+        - name: MGMT_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: ztna-config
+              key: MGMT_PORT
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: database-secrets
+              key: host
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: database-secrets
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-secrets
+              key: password
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: database-secrets
+              key: database
+        - name: DB_SSL_MODE
+          value: "require"
+        - name: CACHE_HOST
+          value: "valkey-service.tridorian-ztna.svc.cluster.local"
+        - name: CACHE_PORT
+          value: "6379"
+        - name: CACHE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cache-secrets
+              key: password
+        - name: ZTNA_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ztna-secrets
+              key: private-key
+        - name: ZTNA_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ztna-secrets
+              key: public-key
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          tcpSocket:
+            port: 5443
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 5443
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: ztna-secrets
+          mountPath: "/mnt/secrets-store"
+          readOnly: true
+        - name: database-secrets
+          mountPath: "/mnt/db-secrets"
+          readOnly: true
+        - name: cache-secrets
+          mountPath: "/mnt/cache-secrets"
+          readOnly: true
+      volumes:
+      - name: ztna-secrets
+        csi:
+          driver: secrets-store-gke.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: "ztna-secrets"
+      - name: database-secrets
+        csi:
+          driver: secrets-store-gke.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: "database-secrets"
+      - name: cache-secrets
+        csi:
+          driver: secrets-store-gke.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: "cache-secrets"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-controlplane
+  labels:
+    app: gateway-controlplane
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5443
+    targetPort: 5443
+    protocol: TCP
+    name: grpc
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: metrics
+  selector:
+    app: gateway-controlplane

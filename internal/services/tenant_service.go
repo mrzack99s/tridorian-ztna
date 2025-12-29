@@ -16,18 +16,22 @@ import (
 )
 
 type TenantService struct {
-	db        *gorm.DB
-	masterKey string
+	db               *gorm.DB
+	masterKey        string
+	freeDomainSuffix string
 }
 
 func NewTenantService(db *gorm.DB) *TenantService {
 	return &TenantService{
-		db:        db,
-		masterKey: utils.GetEnv("MASTER_KEY", "default-master-key-32-chars-long"),
+		db:               db,
+		masterKey:        utils.GetEnv("MASTER_KEY", "default-master-key-32-chars-long"),
+		freeDomainSuffix: utils.GetEnv("FREE_DOMAIN_SUFFIX", ".triztnaon.redev.cloud"),
 	}
 }
 
-const FreeDomainSuffix = ".devztna.rattanaburi.ac.th"
+func (s *TenantService) GetFreeDomainSuffix() string {
+	return s.freeDomainSuffix
+}
 
 func (s *TenantService) ListTenants() ([]models.Tenant, error) {
 	var tenants []models.Tenant
@@ -49,9 +53,9 @@ func (s *TenantService) FindBySlug(slug string) (*models.Tenant, error) {
 
 // FindByDomain searches for a tenant based on a custom domain or free domain.
 func (s *TenantService) FindByDomain(domain string) (*models.Tenant, error) {
-	// 1. Check if it's a free domain (slug.devztna.rattanaburi.ac.th)
-	if strings.HasSuffix(domain, FreeDomainSuffix) {
-		slug := strings.TrimSuffix(domain, FreeDomainSuffix)
+	// 1. Check if it's a free domain (slug.triztnaon.redev.cloud)
+	if strings.HasSuffix(domain, s.freeDomainSuffix) {
+		slug := strings.TrimSuffix(domain, s.freeDomainSuffix)
 		return s.FindBySlug(slug)
 	}
 
@@ -84,7 +88,7 @@ func (s *TenantService) ActivateDomain(tenantID uuid.UUID, domain string) error 
 	}
 
 	// Validate: Is it the free domain?
-	freeDomain := strings.ToLower(fmt.Sprintf("%s%s", tenant.Slug, FreeDomainSuffix))
+	freeDomain := strings.ToLower(fmt.Sprintf("%s%s", tenant.Slug, s.freeDomainSuffix))
 	if domain == freeDomain {
 		tenant.PrimaryDomain = domain
 		log.Printf("🔹 Activating free domain: %s for tenant: %s", domain, tenant.Name)
@@ -156,7 +160,7 @@ func (s *TenantService) CreateTenantWithAdmin(name, adminEmail, adminPassword st
 
 		// Auto-generate credentials if not provided
 		if adminEmail == "" {
-			adminEmail = "admin@" + slug + FreeDomainSuffix
+			adminEmail = "admin@" + slug + s.freeDomainSuffix
 		}
 		if adminPassword == "" {
 			adminPassword = utils.GenerateRandomPassword(12)
@@ -167,7 +171,7 @@ func (s *TenantService) CreateTenantWithAdmin(name, adminEmail, adminPassword st
 		}
 
 		// Set primary domain to free domain by default
-		tenant.PrimaryDomain = fmt.Sprintf("%s%s", tenant.Slug, FreeDomainSuffix)
+		tenant.PrimaryDomain = fmt.Sprintf("%s%s", tenant.Slug, s.freeDomainSuffix)
 		if err := tx.Save(&tenant).Error; err != nil {
 			return err
 		}
@@ -251,10 +255,10 @@ func (s *TenantService) RegisterCustomDomain(tenantID uuid.UUID, domain string) 
 		return nil, errors.New("cannot use system reserved domain")
 	}
 
-	// 2. Restriction: Free subdomain (.devztna.rattanaburi.ac.th)
+	// 2. Restriction: Free subdomain (.triztnaon.redev.cloud)
 	// Must be exactly tenant.Slug + FreeDomainSuffix
-	expectedFreeDomain := tenant.Slug + FreeDomainSuffix
-	if strings.HasSuffix(domain, FreeDomainSuffix) {
+	expectedFreeDomain := tenant.Slug + s.freeDomainSuffix
+	if strings.HasSuffix(domain, s.freeDomainSuffix) {
 		if domain != expectedFreeDomain {
 			return nil, fmt.Errorf("you can only use your assigned subdomain: %s", expectedFreeDomain)
 		}
@@ -277,7 +281,7 @@ func (s *TenantService) RegisterCustomDomain(tenantID uuid.UUID, domain string) 
 	}
 
 	token := fmt.Sprintf("tridorian-verification=%s", uuid.New().String())
-	isVerified := strings.HasSuffix(domain, FreeDomainSuffix)
+	isVerified := strings.HasSuffix(domain, s.freeDomainSuffix)
 
 	customDomain := models.CustomDomain{
 		BaseTenant:        models.BaseTenant{TenantID: tenantID},
@@ -353,7 +357,7 @@ func (s *TenantService) ListDomains(tenantID uuid.UUID) ([]string, error) {
 
 	var domains []string
 	// 1. Free Domain
-	freeDomain := fmt.Sprintf("%s%s", tenant.Slug, FreeDomainSuffix)
+	freeDomain := fmt.Sprintf("%s%s", tenant.Slug, s.freeDomainSuffix)
 	domains = append(domains, freeDomain)
 
 	// 2. Verified Custom Domains

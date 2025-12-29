@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ztna-config
+data:
+  APP_ENV: "production"
+  LOG_LEVEL: "info"
+  ENABLE_METRICS: "true"
+  METRICS_PORT: "9090"
+  
+  # Service Ports
+  MGMT_PORT: "8080"
+  GRPC_PORT: "5443"
+  AUTH_PORT: "8081"
+  VPN_PORT: "6500"
+  
+  # Security Settings
+  JWT_EXPIRY_HOURS: "24"
+  SESSION_TIMEOUT_MINUTES: "60"
+  MAX_LOGIN_ATTEMPTS: "5"
+  ENABLE_RATE_LIMITING: "true"
+  RATE_LIMIT_REQUESTS_PER_MINUTE: "100"
+  FREE_DOMAIN_SUFFIX: ".triztnaon.redev.cloud"

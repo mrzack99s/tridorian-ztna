@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: valkey
+  labels:
+    app: valkey
+    component: cache
+spec:
+  serviceName: valkey
+  replicas: 1
+  selector:
+    matchLabels:
+      app: valkey
+  template:
+    metadata:
+      labels:
+        app: valkey
+        component: cache
+    spec:
+      serviceAccountName: gke-secrets-sa
+      containers:
+      - name: valkey
+        image: valkey/valkey:9-alpine
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          VALKEY_PASSWORD=$(cat /mnt/cache-secrets/password)
+          exec valkey-server --requirepass "$VALKEY_PASSWORD" --bind 0.0.0.0
+        ports:
+        - containerPort: 6379
+          name: valkey
+        volumeMounts:
+        - name: valkey-storage
+          mountPath: /data
+        - name: cache-secrets
+          mountPath: "/mnt/cache-secrets"
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: cache-secrets
+        csi:
+          driver: secrets-store-gke.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: "cache-secrets"
+  volumeClaimTemplates:
+  - metadata:
+      name: valkey-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "standard-rwo"
+      resources:
+        requests:
+          storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey-service
+  labels:
+    app: valkey
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+    name: valkey
+  selector:
+    app: valkey
+  clusterIP: None
